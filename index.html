@@ -9,11 +9,7 @@
 <meta name="theme-color" content="#F4F2ED" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#17150F" media="(prefers-color-scheme: dark)">
 <style>
-  :root {
-    color-scheme: light dark;
-    padding-top: env(safe-area-inset-top, 0px);
-    padding-bottom: env(safe-area-inset-bottom, 0px);
-  }
+  :root { color-scheme: light dark; padding-top: env(safe-area-inset-top,0px); padding-bottom: env(safe-area-inset-bottom,0px); }
   html, body { margin: 0; }
   img { max-width: 100%; }
   [hidden] { display: none !important; }
@@ -628,9 +624,7 @@
     <button id="nextMonth" aria-label="Mes siguiente">&#8250;</button>
   </div>
 
-  <div id="localNotice" class="notice" hidden>
-    <strong>Falta vincular la planilla.</strong> Hasta que la conectes en Config, los gastos quedan solo en este teléfono y no los ven los demás.
-  </div>
+  <div id="localNotice" class="notice" hidden></div>
 
   <!-- INICIO -->
   <section id="tab-inicio">
@@ -847,7 +841,7 @@
 (function () {
   "use strict";
 
-  var APP_VERSION = "2026-09-21.2";
+  var APP_VERSION = "2026-09-21.3";
 
   var ESTS = ["Nueva Córdoba", "Tejeda", "CDP"];
   var EST_VAR = { "Nueva Córdoba": "nc", "Tejeda": "tj", "CDP": "cdp" };
@@ -866,6 +860,7 @@
   var gastos = [], proveedores = [], mediosPago = [];
   var sheetUrl = "", outbox = [];
   var ready = false, syncing = false, lastFetch = 0, lastError = "";
+  var rescateHecho = false;
   var viewMonth, activeTab = "inicio";
   var editingId = null, detailId = null;
   var selPersona = "", selEst = "", saving = false;
@@ -983,6 +978,13 @@
     }
   }
 
+  /** Una respuesta solo sirve si trae de verdad la lista de gastos.
+   *  El script viejo contesta ok:true sin gastos, y tomarlo por válido
+   *  vaciaba la app. */
+  function estadoValido(data) {
+    return !!(data && data.ok === true && Array.isArray(data.gastos));
+  }
+
   function aplicarCola() {
     outbox.forEach(function (it) {
       if (it.op === "upsert") {
@@ -999,25 +1001,39 @@
     gastos.sort(byDateDesc);
   }
 
+  /** Devuelve true si quedó algo por subir y conviene sincronizar de nuevo. */
   function aplicarEstado(data) {
-    var pv = data.proveedores || [], mp = data.mediosPago || [];
-    var listasVacias = !pv.length && !mp.length;
-    var teniamos = proveedores.length || mediosPago.length;
+    if (!estadoValido(data)) return false;
 
-    gastos = (data.gastos || []).map(function (g) { return normGasto(String(g.id), g); });
+    var pv = Array.isArray(data.proveedores) ? data.proveedores : [];
+    var mp = Array.isArray(data.mediosPago) ? data.mediosPago : [];
+    var pendientes = [];
 
-    if (listasVacias && teniamos) {
-      // La planilla todavía no tiene listas: subimos las de este teléfono
-      // en vez de borrarlas.
-      encolar({ op: "listas", id: "__listas__", proveedores: proveedores, mediosPago: mediosPago });
+    if (!data.gastos.length && gastos.length && !rescateHecho) {
+      // La planilla vino vacía pero este teléfono tiene gastos: los subimos
+      // en lugar de borrarlos. Una sola vez por apertura, para no ciclar.
+      rescateHecho = true;
+      gastos.forEach(function (g) { pendientes.push({ op: "upsert", id: g.id, gasto: g }); });
+    } else {
+      gastos = data.gastos.map(function (g) { return normGasto(String(g.id), g); });
+    }
+
+    if (!pv.length && !mp.length && (proveedores.length || mediosPago.length)) {
+      pendientes.push({ op: "listas", id: "__listas__", proveedores: proveedores, mediosPago: mediosPago });
     } else {
       proveedores = pv.slice().sort(cmpEs);
       mediosPago = mp.slice();
     }
 
+    pendientes.forEach(function (it) {
+      outbox = outbox.filter(function (x) { return !(x.op === it.op && x.id === it.id); }).concat([it]);
+    });
+    if (pendientes.length) guardarCola();
+
     aplicarCola();
     guardarCache();
     refreshFilterSelects();
+    return pendientes.length > 0;
   }
 
   async function sincronizar() {
@@ -1025,12 +1041,13 @@
     syncing = true;
     lastError = "";
     pintarEstado();
+    var faltaSubir = false;
     try {
       var ultimo = null, quedan = [];
       for (var i = 0; i < outbox.length; i++) {
         try {
           var r = await enviar(outbox[i]);
-          if (r && r.ok && !r.ciego) ultimo = r;
+          if (estadoValido(r) && !r.ciego) ultimo = r;
         } catch (e) {
           quedan.push(outbox[i]);
         }
@@ -1042,17 +1059,21 @@
       if (!data) {
         try { data = await pedirEstado(); } catch (e) { data = null; }
       }
-      if (data && data.ok) {
-        aplicarEstado(data);
+      if (estadoValido(data)) {
+        faltaSubir = aplicarEstado(data);
         lastFetch = Date.now();
+      } else if (data && data.ok) {
+        // Contesta, pero no manda los gastos: es el script viejo.
+        lastError = "viejo";
       } else {
-        lastError = "No se pudo leer la planilla.";
+        lastError = "lectura";
       }
     } finally {
       syncing = false;
       ready = true;
       pintarEstado();
       render();
+      if (faltaSubir) setTimeout(sincronizar, 500);
     }
   }
 
@@ -1066,12 +1087,24 @@
     var dot = $("connDot"), txt = $("connText");
     if (!sheetUrl) { dot.className = "dot local"; txt.textContent = "Sin planilla"; }
     else if (syncing) { dot.className = "dot"; txt.textContent = "Sincronizando"; }
+    else if (lastError === "viejo") { dot.className = "dot bad"; txt.textContent = "Script viejo"; }
     else if (outbox.length) { dot.className = "dot local"; txt.textContent = outbox.length + " sin subir"; }
     else if (lastError) { dot.className = "dot bad"; txt.textContent = "Sin señal"; }
     else { dot.className = "dot ok"; txt.textContent = "Al día"; }
 
     var aviso = $("localNotice");
-    if (aviso) aviso.hidden = !!sheetUrl;
+    if (aviso) {
+      var msg = "";
+      if (!sheetUrl) {
+        msg = "<strong>Falta vincular la planilla.</strong> Hasta que la conectes en Config, los gastos quedan solo en este teléfono y no los ven los demás.";
+      } else if (lastError === "viejo") {
+        msg = "<strong>La planilla tiene la versión vieja del script.</strong> La app no puede leer los gastos de ahí hasta que se actualice. Mientras tanto seguís viendo y cargando los de este teléfono, y nada se pierde.";
+      } else if (lastError === "lectura") {
+        msg = "<strong>No se pudo leer la planilla.</strong> Seguís viendo lo guardado en este teléfono. Se reintenta solo.";
+      }
+      aviso.innerHTML = msg;
+      aviso.hidden = !msg;
+    }
 
     var st = $("sheetState");
     if (st) st.textContent = sheetUrl ? (syncing ? "Sincronizando…" : "Vinculada") : "Sin vincular";
@@ -1448,17 +1481,21 @@
     sheetMsg("Probando…", true);
     try {
       var data = await pedirEstado();
-      if (data && data.ok) {
+      if (estadoValido(data)) {
         aplicarEstado(data);
         lastFetch = Date.now();
         lastError = "";
         render();
         pintarEstado();
-        sheetMsg("Conectada. En la planilla hay " + (data.gastos || []).length + " gastos, " +
+        sheetMsg("Conectada. En la planilla hay " + data.gastos.length + " gastos, " +
                  (data.proveedores || []).length + " proveedores y " +
                  (data.mediosPago || []).length + " formas de pago.", true);
+      } else if (data && data.ok) {
+        lastError = "viejo";
+        pintarEstado();
+        sheetMsg("La planilla contesta, pero con la versión vieja del script: no devuelve los gastos. Hay que pegar el código nuevo y volver a implementar.", false);
       } else {
-        sheetMsg("La planilla contestó, pero con un formato inesperado. ¿Implementaste la versión nueva del código?", false);
+        sheetMsg("La planilla contestó con un formato inesperado.", false);
       }
     } catch (e) {
       sheetMsg("No se pudo leer la planilla. Revisá que la dirección termine en /exec, que el acceso sea «Cualquier usuario», y que hayas implementado la versión nueva del código.", false);
