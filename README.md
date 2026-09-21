@@ -17,18 +17,31 @@ fecha, proveedor, forma de pago, monto y nota.
 
 ## Dónde viven los datos
 
-En **dos lugares a la vez**:
+**La planilla de Google es la base de datos.** Ahí viven los gastos y también
+las listas de proveedores y formas de pago. Los tres teléfonos leen de la
+planilla al abrir la app y escriben en ella cada cambio, así todos ven lo
+mismo: si Mariano agrega un proveedor, le aparece a Hernán.
 
-1. **En cada teléfono**, para que la app funcione al instante y sin señal.
-2. **En la planilla de Google**, que es la copia real y consolidada.
+Cada teléfono guarda además una copia local, que sirve para que la app abra al
+instante y para seguir cargando sin señal. Lo que quede sin subir se marca en
+Config y se manda solo cuando vuelve la conexión.
 
-La planilla se conecta desde Config → Planilla de Google, pegando la dirección
-de la aplicación web de Apps Script (la que termina en `/exec`). No es el link
-de la planilla: es el que da Google al publicar el script.
+La planilla tiene dos hojas, las dos editables a mano desde Google:
 
-Cada gasto viaja con un ID propio, así que editar en la app corrige la fila
-existente en lugar de duplicarla. Si un envío falla, queda en cola y se
-reintenta al abrir la app. El botón **Reenviar todo** repone la planilla entera.
+| Hoja | Contenido |
+| --- | --- |
+| `Gastos` | Un gasto por fila, identificado por su ID |
+| `Listas` | Columna A: proveedores. Columna B: formas de pago |
+
+Se conecta desde Config → Planilla de Google, pegando la dirección de la
+aplicación web de Apps Script (la que termina en `/exec`). No es el link de la
+planilla: es el que da Google al publicar el script. Hay que hacerlo una vez
+en cada teléfono.
+
+Cada gasto viaja con un ID, así que editar corrige la fila existente en lugar
+de duplicarla, y renombrar un proveedor lo corrige en todos los gastos de una
+sola vez. El botón **Actualizar ahora**, o tocar el indicador de estado arriba
+a la derecha, fuerza una sincronización.
 
 ## Instalar en el celular
 

@@ -619,7 +619,7 @@
       <div class="brand-name">Ricaso</div>
       <div class="brand-sub">Registro de gastos</div>
     </div>
-    <div class="conn" id="conn"><span class="dot" id="connDot"></span><span id="connText">Conectando</span></div>
+    <button class="conn" id="conn" type="button" title="Tocá para actualizar"><span class="dot" id="connDot"></span><span id="connText">Abriendo</span></button>
   </div>
 
   <div class="monthnav" id="monthNav">
@@ -629,7 +629,7 @@
   </div>
 
   <div id="localNotice" class="notice" hidden>
-    <strong>Modo local.</strong> Estás usando una copia guardada en este teléfono: los gastos quedan solo acá y no los ven los demás. Para que se compartan, hay que abrir la app desde el link compartido.
+    <strong>Falta vincular la planilla.</strong> Hasta que la conectes en Config, los gastos quedan solo en este teléfono y no los ven los demás.
   </div>
 
   <!-- INICIO -->
@@ -730,22 +730,21 @@
         <span class="acc-meta"><span id="sheetState">Sin vincular</span><span>&#9662;</span></span>
       </button>
       <div class="acc-body" id="accSheet" hidden>
-        <p class="acc-note">Pegá la dirección de la <strong>aplicación web de Apps Script</strong>, la que termina en <code>/exec</code>. No es el link de la planilla: es el que te da Google al publicar el script.</p>
+        <p class="acc-note">La planilla es la base de datos: los gastos y las listas se guardan ahí y los tres teléfonos ven lo mismo. Pegá la dirección de la <strong>aplicación web de Apps Script</strong>, la que termina en <code>/exec</code>.</p>
         <div class="cfg-add" style="margin-top:0">
           <input type="text" id="sheetUrlInput" placeholder="https://script.google.com/macros/s/.../exec" autocomplete="off" spellcheck="false">
           <button id="saveSheetUrl">Guardar</button>
         </div>
         <div class="sheet-actions" style="margin-top:12px">
           <button type="button" id="testSheet">Probar conexión</button>
-          <button type="button" id="resyncSheet">Reenviar todo</button>
+          <button type="button" id="resyncSheet">Actualizar ahora</button>
         </div>
         <div class="cfg-msg" id="msgSheet" hidden></div>
         <p class="acc-note" id="pendingNote" style="margin-top:12px" hidden></p>
-        <p class="acc-note" id="sheetBlocked" style="margin-top:12px" hidden>Desde la vista de Claude el envío a Google suele estar bloqueado por seguridad del navegador. La planilla se llena cuando usan la app desde su propia dirección web.</p>
       </div>
     </div>
 
-    <p class="acc-note" style="margin-top:18px">Los cambios que hagas acá los ven Mariano y Hernán al instante en sus teléfonos.</p>
+    <p class="acc-note" style="margin-top:18px">Todo lo que cambies acá se guarda en la planilla, así que lo ven Mariano y Hernán la próxima vez que abran la app.</p>
 
     <div class="acc" style="margin-top:18px">
       <div style="padding:16px">
@@ -848,44 +847,42 @@
 (function () {
   "use strict";
 
+  var APP_VERSION = "2026-09-21.2";
+
   var ESTS = ["Nueva Córdoba", "Tejeda", "CDP"];
   var EST_VAR = { "Nueva Córdoba": "nc", "Tejeda": "tj", "CDP": "cdp" };
   var EST_SHORT = { "Nueva Córdoba": "N. CÓRDOBA", "Tejeda": "TEJEDA", "CDP": "CDP" };
-  var MESES = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
+  var MESES = ["enero","febrero","marzo","abril","mayo","junio",
+               "julio","agosto","septiembre","octubre","noviembre","diciembre"];
 
-  var db = null;
-  var mode = "";            // "shared" = base compartida | "local" = este telefono
-  var gastos = [];
-  var proveedores = [];
-  var mediosPago = [];
-  var ready = false;
-  var viewMonth = todayKey().slice(0, 7);
-  var activeTab = "inicio";
-  var editingId = null;
-  var detailId = null;
-  var selPersona = "";
-  var selEst = "";
-  var saving = false;
-  var openAcc = "";
-  var sheetUrl = "";
-  var outbox = [];
-  var flushing = false;
-  var editingCfg = null;   // {list:"prov"|"medio", name:"..."}
+  var LS = {
+    gastos: "ricaso_gastos",
+    proveedores: "ricaso_proveedores",
+    mediosPago: "ricaso_mediosPago",
+    sheet: "ricaso_sheet_url",
+    outbox: "ricaso_outbox"
+  };
 
-  var APP_VERSION = "2026-09-21.1";
+  var gastos = [], proveedores = [], mediosPago = [];
+  var sheetUrl = "", outbox = [];
+  var ready = false, syncing = false, lastFetch = 0, lastError = "";
+  var viewMonth, activeTab = "inicio";
+  var editingId = null, detailId = null;
+  var selPersona = "", selEst = "", saving = false;
+  var openAcc = "", editingCfg = null;
 
   var $ = function (id) { return document.getElementById(id); };
 
-  /* ---------- helpers ---------- */
+  /* ---------------------------------------------------------- utilidades */
+  function pad(n) { return n < 10 ? "0" + n : "" + n; }
   function todayKey() {
     var d = new Date();
     return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
   }
-  function pad(n) { return n < 10 ? "0" + n : "" + n; }
+  viewMonth = todayKey().slice(0, 7);
 
   function fmt(n) {
-    var abs = Math.abs(n);
-    var dec = Math.round(abs * 100) % 100 === 0 ? 0 : 2;
+    var dec = Math.round(Math.abs(n) * 100) % 100 === 0 ? 0 : 2;
     return "$ " + n.toLocaleString("es-AR", { minimumFractionDigits: dec, maximumFractionDigits: dec });
   }
   function fmtShort(n) { return "$ " + Math.round(n).toLocaleString("es-AR"); }
@@ -893,10 +890,7 @@
     var p = key.split("-");
     return MESES[parseInt(p[1], 10) - 1] + " " + p[0];
   }
-  function dayLabel(iso) {
-    var p = iso.split("-");
-    return p[2] + "/" + p[1];
-  }
+  function dayLabel(iso) { var p = iso.split("-"); return p[2] + "/" + p[1]; }
   function parseMonto(raw) {
     if (!raw) return NaN;
     var v = parseFloat(String(raw).replace(/\s/g, "").replace(",", "."));
@@ -918,9 +912,7 @@
   function ofMonth(key) {
     return gastos.filter(function (g) { return String(g.fecha).slice(0, 7) === key; });
   }
-  function sum(arr) {
-    return arr.reduce(function (a, g) { return a + (Number(g.monto) || 0); }, 0);
-  }
+  function sum(arr) { return arr.reduce(function (a, g) { return a + (Number(g.monto) || 0); }, 0); }
   function byDateDesc(a, b) {
     if (a.fecha !== b.fecha) return a.fecha < b.fecha ? 1 : -1;
     return (b.creado || "") < (a.creado || "") ? -1 : 1;
@@ -930,6 +922,12 @@
     for (var i = 0; i < gastos.length; i++) if (gastos[i][field] === name) n++;
     return n;
   }
+  function find(id) {
+    for (var i = 0; i < gastos.length; i++) if (gastos[i].id === id) return gastos[i];
+    return null;
+  }
+  function newId() { return "g" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
+
   function normGasto(id, data) {
     data = data || {};
     return {
@@ -945,28 +943,28 @@
     };
   }
 
-  /* ---------- almacenamiento: base compartida o este telefono ---------- */
-  var LS = { gastos: "ricaso_gastos", proveedores: "ricaso_proveedores", mediosPago: "ricaso_mediosPago" };
+  /* ------------------------------------------------- caché en el teléfono */
   function lsGet(k, fb) {
     try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : fb; } catch (e) { return fb; }
   }
   function lsSet(k, v) {
     try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch (e) { return false; }
   }
-  function newId() { return "g" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
-  function persistLocal() {
+  function guardarCache() {
     lsSet(LS.gastos, gastos);
     lsSet(LS.proveedores, proveedores);
     lsSet(LS.mediosPago, mediosPago);
-    refreshFilterSelects();
-    render();
+  }
+  function guardarCola() { lsSet(LS.outbox, outbox); }
+
+  /* --------------------------------------------------------- la planilla */
+  async function pedirEstado() {
+    var sep = sheetUrl.indexOf("?") === -1 ? "?" : "&";
+    var res = await fetch(sheetUrl + sep + "t=" + Date.now(), { method: "GET" });
+    return await res.json();
   }
 
-  /* ---------- envio a la planilla de Google ---------- */
-  function saveOutbox() { lsSet("ricaso_outbox", outbox); }
-
-  async function postSheet(payload) {
-    if (!sheetUrl) return false;
+  async function enviar(payload) {
     var opts = {
       method: "POST",
       headers: { "Content-Type": "text/plain;charset=utf-8" },
@@ -974,112 +972,148 @@
     };
     try {
       var res = await fetch(sheetUrl, opts);
-      if (res && res.ok) return true;
-    } catch (e) { /* sigue con el intento a ciegas */ }
-    try {
+      var data = await res.json();
+      if (data && data.ok) return data;
+      throw new Error(data && data.error ? data.error : "respuesta inesperada");
+    } catch (e) {
+      // El navegador no dejó leer la respuesta: mandamos a ciegas.
       opts.mode = "no-cors";
       await fetch(sheetUrl, opts);
-      return true;
-    } catch (e2) {
-      return false;
+      return { ok: true, ciego: true };
     }
   }
 
-  function enqueue(item) {
+  function aplicarCola() {
+    outbox.forEach(function (it) {
+      if (it.op === "upsert") {
+        gastos = gastos.filter(function (g) { return g.id !== it.id; }).concat([normGasto(it.id, it.gasto)]);
+      } else if (it.op === "delete") {
+        gastos = gastos.filter(function (g) { return g.id !== it.id; });
+      } else if (it.op === "listas") {
+        proveedores = (it.proveedores || []).slice();
+        mediosPago = (it.mediosPago || []).slice();
+      } else if (it.op === "renombrar") {
+        gastos.forEach(function (g) { if (g[it.campo] === it.viejo) g[it.campo] = it.nuevo; });
+      }
+    });
+    gastos.sort(byDateDesc);
+  }
+
+  function aplicarEstado(data) {
+    var pv = data.proveedores || [], mp = data.mediosPago || [];
+    var listasVacias = !pv.length && !mp.length;
+    var teniamos = proveedores.length || mediosPago.length;
+
+    gastos = (data.gastos || []).map(function (g) { return normGasto(String(g.id), g); });
+
+    if (listasVacias && teniamos) {
+      // La planilla todavía no tiene listas: subimos las de este teléfono
+      // en vez de borrarlas.
+      encolar({ op: "listas", id: "__listas__", proveedores: proveedores, mediosPago: mediosPago });
+    } else {
+      proveedores = pv.slice().sort(cmpEs);
+      mediosPago = mp.slice();
+    }
+
+    aplicarCola();
+    guardarCache();
+    refreshFilterSelects();
+  }
+
+  async function sincronizar() {
+    if (!sheetUrl || syncing) { pintarEstado(); return; }
+    syncing = true;
+    lastError = "";
+    pintarEstado();
+    try {
+      var ultimo = null, quedan = [];
+      for (var i = 0; i < outbox.length; i++) {
+        try {
+          var r = await enviar(outbox[i]);
+          if (r && r.ok && !r.ciego) ultimo = r;
+        } catch (e) {
+          quedan.push(outbox[i]);
+        }
+      }
+      outbox = quedan;
+      guardarCola();
+
+      var data = ultimo;
+      if (!data) {
+        try { data = await pedirEstado(); } catch (e) { data = null; }
+      }
+      if (data && data.ok) {
+        aplicarEstado(data);
+        lastFetch = Date.now();
+      } else {
+        lastError = "No se pudo leer la planilla.";
+      }
+    } finally {
+      syncing = false;
+      ready = true;
+      pintarEstado();
+      render();
+    }
+  }
+
+  function encolar(item) {
     outbox = outbox.filter(function (x) { return !(x.op === item.op && x.id === item.id); }).concat([item]);
-    saveOutbox();
-    flushOutbox();
+    guardarCola();
+    sincronizar();
   }
 
-  async function flushOutbox() {
-    if (flushing || !sheetUrl || !outbox.length) { updateSheetUi(); return; }
-    flushing = true;
-    updateSheetUi();
-    var quedan = [];
-    for (var i = 0; i < outbox.length; i++) {
-      var ok = await postSheet(outbox[i]);
-      if (!ok) quedan.push(outbox[i]);
-    }
-    outbox = quedan;
-    saveOutbox();
-    flushing = false;
-    updateSheetUi();
-  }
+  function pintarEstado() {
+    var dot = $("connDot"), txt = $("connText");
+    if (!sheetUrl) { dot.className = "dot local"; txt.textContent = "Sin planilla"; }
+    else if (syncing) { dot.className = "dot"; txt.textContent = "Sincronizando"; }
+    else if (outbox.length) { dot.className = "dot local"; txt.textContent = outbox.length + " sin subir"; }
+    else if (lastError) { dot.className = "dot bad"; txt.textContent = "Sin señal"; }
+    else { dot.className = "dot ok"; txt.textContent = "Al día"; }
 
-  function updateSheetUi() {
+    var aviso = $("localNotice");
+    if (aviso) aviso.hidden = !!sheetUrl;
+
     var st = $("sheetState");
-    if (st) st.textContent = sheetUrl ? (flushing ? "Enviando…" : "Vinculada") : "Sin vincular";
+    if (st) st.textContent = sheetUrl ? (syncing ? "Sincronizando…" : "Vinculada") : "Sin vincular";
     var inp = $("sheetUrlInput");
     if (inp && document.activeElement !== inp) inp.value = sheetUrl;
     var note = $("pendingNote");
     if (note) {
       note.hidden = !outbox.length;
-      note.textContent = outbox.length + (outbox.length === 1 ? " movimiento sin enviar a la planilla." : " movimientos sin enviar a la planilla.");
+      note.textContent = outbox.length + (outbox.length === 1
+        ? " cambio todavía sin subir a la planilla."
+        : " cambios todavía sin subir a la planilla.");
     }
-    var blocked = $("sheetBlocked");
-    if (blocked) blocked.hidden = mode !== "shared";
   }
 
-  function sheetMsg(text, ok) {
-    var el = $("msgSheet");
-    el.textContent = text || "";
-    el.className = "cfg-msg" + (ok ? " ok" : "");
-    el.hidden = !text;
+  /* ------------------------------------------------------------ escritura */
+  function guardarGasto(id, body) {
+    var gid = id || newId();
+    var g = normGasto(gid, body);
+    gastos = gastos.filter(function (x) { return x.id !== gid; }).concat([g]).sort(byDateDesc);
+    guardarCache();
+    refreshFilterSelects();
+    render();
+    encolar({ op: "upsert", id: gid, gasto: g });
   }
 
-  var store = {
-    saveGasto: async function (id, body) {
-      var gid = id || newId();
-      if (mode === "shared") {
-        await db.doc("gastos/" + gid).set(body);
-        enqueue({ op: "upsert", id: gid, gasto: normGasto(gid, body) });
-        return;
-      }
-      gastos = gastos.filter(function (g) { return g.id !== gid; })
-                     .concat([normGasto(gid, body)]).sort(byDateDesc);
-      persistLocal();
-      enqueue({ op: "upsert", id: gid, gasto: normGasto(gid, body) });
-    },
-    deleteGasto: async function (id) {
-      if (mode === "shared") {
-        await db.doc("gastos/" + id).delete();
-      } else {
-        gastos = gastos.filter(function (g) { return g.id !== id; });
-        persistLocal();
-      }
-      enqueue({ op: "delete", id: id });
-    },
-    setGastoField: async function (id, field, value) {
-      if (mode === "shared") {
-        var patch = {};
-        patch[field] = value;
-        await db.doc("gastos/" + id).update(patch);
-        return;
-      }
-      var g = find(id);
-      if (g) { g[field] = value; persistLocal(); }
-      var actual = find(id);
-      if (actual) enqueue({ op: "upsert", id: id, gasto: actual });
-    },
-    saveList: async function (which, items) {
-      if (mode === "shared") { await db.doc("config/" + CFG[which].key).set({ items: items }); return; }
-      if (which === "prov") proveedores = items; else mediosPago = items;
-      persistLocal();
-    },
-    saveSheetUrl: async function (url) {
-      if (mode === "shared") { await db.doc("config/sheet").set({ url: url }); return; }
-      sheetUrl = url;
-      lsSet("ricaso_sheet_url", url);
-      updateSheetUi();
-    }
-  };
-
-  function setConn(state, text) {
-    $("connDot").className = "dot" + (state ? " " + state : "");
-    $("connText").textContent = text;
+  function borrarGasto(id) {
+    gastos = gastos.filter(function (g) { return g.id !== id; });
+    guardarCache();
+    render();
+    encolar({ op: "delete", id: id });
   }
 
-  /* ---------- rendering: movements ---------- */
+  function guardarListas(provs, medios) {
+    proveedores = provs.slice().sort(cmpEs);
+    mediosPago = medios.slice();
+    guardarCache();
+    refreshFilterSelects();
+    render();
+    encolar({ op: "listas", id: "__listas__", proveedores: proveedores, mediosPago: mediosPago });
+  }
+
+  /* ------------------------------------------------------ lista de gastos */
   function rowHTML(g) {
     var v = EST_VAR[g.establecimiento] || "nc";
     var titulo = g.proveedor ? esc(g.proveedor) : "Sin proveedor";
@@ -1194,12 +1228,16 @@
       function () { return "var(--ink-soft)"; }, vacio);
   }
 
-  /* ---------- rendering: config ---------- */
+  /* -------------------------------------------------------------- config */
   var CFG = {
-    prov:  { key: "proveedores", field: "proveedor", listEl: "listProv",  countEl: "countProv",  msgEl: "msgProv",  sorted: true,  singular: "proveedor" },
-    medio: { key: "mediosPago",  field: "medioPago", listEl: "listMedio", countEl: "countMedio", msgEl: "msgMedio", sorted: false, singular: "forma de pago" }
+    prov:  { field: "proveedor", listEl: "listProv",  countEl: "countProv",  msgEl: "msgProv",  sorted: true,  singular: "proveedores" },
+    medio: { field: "medioPago", listEl: "listMedio", countEl: "countMedio", msgEl: "msgMedio", sorted: false, singular: "formas de pago" }
   };
   function itemsOf(which) { return which === "prov" ? proveedores : mediosPago; }
+  function conLista(which, items) {
+    if (which === "prov") guardarListas(items, mediosPago);
+    else guardarListas(proveedores, items);
+  }
 
   function renderConfig() {
     ["prov", "medio"].forEach(function (which) {
@@ -1212,7 +1250,7 @@
       $(c.listEl).innerHTML = items.map(function (name) {
         if (editingCfg && editingCfg.list === which && editingCfg.name === name) {
           return '<div class="cfg-row">' +
-            '<input type="text" class="cfg-edit" value="' + esc(name) + '" data-which="' + which + '" data-old="' + esc(name) + '">' +
+            '<input type="text" class="cfg-edit" value="' + esc(name) + '">' +
             '<button class="mini go" data-act="save" data-which="' + which + '" data-name="' + esc(name) + '">Guardar</button>' +
             '<button class="mini" data-act="cancel">Cancelar</button>' +
           '</div>';
@@ -1226,6 +1264,7 @@
         '</div>';
       }).join("");
     });
+    pintarEstado();
   }
 
   function cfgMsg(which, text) {
@@ -1234,73 +1273,56 @@
     el.hidden = !text;
   }
 
-  async function addCfg(which) {
-    if (!mode) return;
+  function addCfg(which) {
     var input = $(which === "prov" ? "newProv" : "newMedio");
     var name = input.value.trim();
     if (!name) return;
     var items = itemsOf(which);
     if (items.some(function (x) { return x.toLowerCase() === name.toLowerCase(); })) {
-      cfgMsg(which, "«" + name + "» ya está en la lista.");
-      return;
+      return cfgMsg(which, "«" + name + "» ya está en la lista.");
     }
     cfgMsg(which, "");
     var next = items.concat([name]);
     if (CFG[which].sorted) next.sort(cmpEs);
-    try {
-      await store.saveList(which, next);
-      input.value = "";
-    } catch (e) {
-      cfgMsg(which, "No se pudo guardar. Probá de nuevo.");
-    }
+    conLista(which, next);
+    input.value = "";
   }
 
-  async function renameCfg(which, oldName, newName) {
+  function renameCfg(which, oldName, newName) {
     newName = newName.trim();
     if (!newName) return;
     var items = itemsOf(which);
     if (newName !== oldName && items.some(function (x) { return x.toLowerCase() === newName.toLowerCase(); })) {
-      cfgMsg(which, "Ya existe otro con ese nombre.");
-      return;
+      return cfgMsg(which, "Ya existe otro con ese nombre.");
     }
     cfgMsg(which, "");
     editingCfg = null;
     if (newName === oldName) { renderConfig(); return; }
 
-    var next = items.map(function (x) { return x === oldName ? newName : x; });
-    if (CFG[which].sorted) next.sort(cmpEs);
     var field = CFG[which].field;
-    var afectados = gastos.filter(function (g) { return g[field] === oldName; });
-
-    try {
-      await store.saveList(which, next);
-      for (var i = 0; i < afectados.length; i++) {
-        cfgMsg(which, "Actualizando gastos… " + (i + 1) + " de " + afectados.length);
-        await store.setGastoField(afectados[i].id, field, newName);
-      }
-      cfgMsg(which, "");
-    } catch (e) {
-      cfgMsg(which, "Se renombró en la lista, pero algún gasto quedó sin actualizar.");
-    }
+    gastos.forEach(function (g) { if (g[field] === oldName) g[field] = newName; });
+    var lista = items.map(function (x) { return x === oldName ? newName : x; });
+    if (CFG[which].sorted) lista.sort(cmpEs);
+    if (which === "prov") proveedores = lista; else mediosPago = lista;
+    guardarCache();
+    refreshFilterSelects();
+    render();
+    encolar({ op: "renombrar", id: "ren:" + field + ":" + oldName, campo: field, viejo: oldName, nuevo: newName });
   }
 
-  async function deleteCfg(which, name) {
-    if (!mode) return;
+  function deleteCfg(which, name) {
     var c = CFG[which];
     var used = usedCount(c.field, name);
     var msg = used
-      ? "«" + name + "» está usado en " + used + (used === 1 ? " gasto" : " gastos") + ". Si lo borrás, esos gastos lo conservan pero ya no vas a poder elegirlo al cargar. ¿Borrar igual?"
+      ? "«" + name + "» está usado en " + used + (used === 1 ? " gasto" : " gastos") +
+        ". Si lo borrás, esos gastos lo conservan pero ya no vas a poder elegirlo al cargar. ¿Borrar igual?"
       : "¿Borrar «" + name + "» de la lista de " + c.singular + "?";
     if (!window.confirm(msg)) return;
     cfgMsg(which, "");
-    try {
-      await store.saveList(which, itemsOf(which).filter(function (x) { return x !== name; }));
-    } catch (e) {
-      cfgMsg(which, "No se pudo borrar. Probá de nuevo.");
-    }
+    conLista(which, itemsOf(which).filter(function (x) { return x !== name; }));
   }
 
-  /* ---------- selects ---------- */
+  /* ------------------------------------------------------------- selects */
   function fillSelect(sel, items, placeholder, current) {
     var all = items.slice();
     if (current && all.indexOf(current) === -1) all.push(current);
@@ -1320,10 +1342,10 @@
     if (provNames.indexOf(prevProv) !== -1) provSel.value = prevProv;
 
     var medSel = $("fltMedio"), prevMed = medSel.value;
-    var medUsados = {};
-    gastos.forEach(function (g) { if (g.medioPago) medUsados[g.medioPago] = true; });
     var medNames = mediosPago.slice();
-    Object.keys(medUsados).forEach(function (m) { if (medNames.indexOf(m) === -1) medNames.push(m); });
+    gastos.forEach(function (g) {
+      if (g.medioPago && medNames.indexOf(g.medioPago) === -1) medNames.push(g.medioPago);
+    });
     medSel.innerHTML = '<option value="">Todas las formas de pago</option>' +
       medNames.map(function (n) { return '<option value="' + esc(n) + '">' + esc(n) + "</option>"; }).join("");
     if (medNames.indexOf(prevMed) !== -1) medSel.value = prevMed;
@@ -1339,7 +1361,7 @@
     else renderConfig();
   }
 
-  /* ---------- tabs ---------- */
+  /* --------------------------------------------------------------- tabs */
   Array.prototype.forEach.call(document.querySelectorAll(".tab-btn"), function (btn) {
     btn.addEventListener("click", function () {
       activeTab = btn.getAttribute("data-tab");
@@ -1366,7 +1388,7 @@
   });
   $("fltTexto").addEventListener("input", renderHistorial);
 
-  /* ---------- accordions ---------- */
+  /* --------------------------------------------------------- acordeones */
   Array.prototype.forEach.call(document.querySelectorAll(".acc-head"), function (h) {
     h.addEventListener("click", function () {
       var which = h.getAttribute("data-acc");
@@ -1374,7 +1396,7 @@
       $("accProv").hidden = openAcc !== "prov";
       $("accMedio").hidden = openAcc !== "medio";
       $("accSheet").hidden = openAcc !== "sheet";
-      if (openAcc === "sheet") updateSheetUi();
+      if (openAcc === "sheet") pintarEstado();
     });
   });
 
@@ -1384,49 +1406,6 @@
     $(id).addEventListener("keydown", function (ev) {
       if (ev.key === "Enter") { ev.preventDefault(); addCfg(id === "newProv" ? "prov" : "medio"); }
     });
-  });
-
-  $("versionNum").textContent = APP_VERSION;
-  $("checkUpdate").addEventListener("click", function () {
-    this.textContent = "Buscando…";
-    try {
-      var u = new URL(location.href);
-      u.searchParams.set("v", String(Date.now()));
-      location.replace(u.toString());
-    } catch (e) {
-      location.reload();
-    }
-  });
-
-  $("saveSheetUrl").addEventListener("click", async function () {
-    var url = $("sheetUrlInput").value.trim();
-    if (url && !/^https:\/\/script\.google\.com\/macros\/s\/[^\/]+\/exec$/.test(url)) {
-      return sheetMsg("Esa dirección no tiene la forma correcta. Tiene que empezar con https://script.google.com/macros/s/ y terminar en /exec.", false);
-    }
-    try {
-      await store.saveSheetUrl(url);
-      sheetMsg(url ? "Dirección guardada. Probá la conexión." : "Se quitó la dirección.", true);
-    } catch (e) {
-      sheetMsg("No se pudo guardar la dirección.", false);
-    }
-  });
-
-  $("testSheet").addEventListener("click", async function () {
-    if (!sheetUrl) return sheetMsg("Primero guardá la dirección.", false);
-    sheetMsg("Probando…", true);
-    var ok = await postSheet({ op: "ping" });
-    sheetMsg(ok
-      ? "La planilla respondió. Fijate que haya aparecido una fila de prueba."
-      : "No hubo respuesta. Revisá que la dirección termine en /exec y que el acceso del script sea «Cualquier usuario».", ok);
-  });
-
-  $("resyncSheet").addEventListener("click", async function () {
-    if (!sheetUrl) return sheetMsg("Primero guardá la dirección.", false);
-    outbox = gastos.map(function (g) { return { op: "upsert", id: g.id, gasto: g }; });
-    saveOutbox();
-    sheetMsg("Enviando " + outbox.length + (outbox.length === 1 ? " gasto…" : " gastos…"), true);
-    await flushOutbox();
-    sheetMsg(outbox.length ? "Quedaron " + outbox.length + " sin enviar. Probá de nuevo." : "Listo, se enviaron todos.", !outbox.length);
   });
 
   $("tab-config").addEventListener("click", function (ev) {
@@ -1444,7 +1423,70 @@
     }
   });
 
-  /* ---------- segmented controls ---------- */
+  /* ------------------------------------------------ planilla: botones */
+  function sheetMsg(text, ok) {
+    var el = $("msgSheet");
+    el.textContent = text || "";
+    el.className = "cfg-msg" + (ok ? " ok" : "");
+    el.hidden = !text;
+  }
+
+  $("saveSheetUrl").addEventListener("click", function () {
+    var url = $("sheetUrlInput").value.trim();
+    if (url && !/^https:\/\/script\.google\.com\/macros\/s\/[^\/]+\/exec$/.test(url)) {
+      return sheetMsg("Esa dirección no tiene la forma correcta. Empieza con https://script.google.com/macros/s/ y termina en /exec.", false);
+    }
+    sheetUrl = url;
+    lsSet(LS.sheet, url);
+    sheetMsg(url ? "Dirección guardada. Probá la conexión." : "Se quitó la dirección.", true);
+    pintarEstado();
+    if (url) sincronizar();
+  });
+
+  $("testSheet").addEventListener("click", async function () {
+    if (!sheetUrl) return sheetMsg("Primero guardá la dirección.", false);
+    sheetMsg("Probando…", true);
+    try {
+      var data = await pedirEstado();
+      if (data && data.ok) {
+        aplicarEstado(data);
+        lastFetch = Date.now();
+        lastError = "";
+        render();
+        pintarEstado();
+        sheetMsg("Conectada. En la planilla hay " + (data.gastos || []).length + " gastos, " +
+                 (data.proveedores || []).length + " proveedores y " +
+                 (data.mediosPago || []).length + " formas de pago.", true);
+      } else {
+        sheetMsg("La planilla contestó, pero con un formato inesperado. ¿Implementaste la versión nueva del código?", false);
+      }
+    } catch (e) {
+      sheetMsg("No se pudo leer la planilla. Revisá que la dirección termine en /exec, que el acceso sea «Cualquier usuario», y que hayas implementado la versión nueva del código.", false);
+    }
+  });
+
+  $("resyncSheet").addEventListener("click", async function () {
+    if (!sheetUrl) return sheetMsg("Primero guardá la dirección.", false);
+    sheetMsg("Actualizando…", true);
+    await sincronizar();
+    sheetMsg(outbox.length
+      ? "Quedaron " + outbox.length + " cambios sin subir. Probá de nuevo."
+      : "Listo, este teléfono está al día con la planilla.", !outbox.length);
+  });
+
+  $("versionNum").textContent = APP_VERSION;
+  $("checkUpdate").addEventListener("click", function () {
+    this.textContent = "Buscando…";
+    try {
+      var u = new URL(location.href);
+      u.searchParams.set("v", String(Date.now()));
+      location.replace(u.toString());
+    } catch (e) { location.reload(); }
+  });
+
+  $("conn").addEventListener("click", function () { if (sheetUrl) sincronizar(); });
+
+  /* ---------------------------------------------- controles segmentados */
   function wireSeg(containerId, attr, onPick) {
     $(containerId).addEventListener("click", function (ev) {
       var btn = ev.target.closest("button[" + attr + "]");
@@ -1466,7 +1508,6 @@
   });
   wireSeg("segEst", "data-est", function (v) { selEst = v; });
 
-  /* ---------- monto input ---------- */
   $("fMonto").addEventListener("input", function () {
     var v = this.value.replace(/[^0-9,]/g, "");
     var parts = v.split(",");
@@ -1478,7 +1519,7 @@
     $("montoHint").textContent = isFinite(n) && n > 0 ? fmt(n) : "Usá la coma para los centavos.";
   });
 
-  /* ---------- form ---------- */
+  /* ------------------------------------------------------------ el form */
   function openForm(existing) {
     editingId = existing ? existing.id : null;
     $("formTitle").textContent = existing ? "Editar gasto" : "Nuevo gasto";
@@ -1520,7 +1561,7 @@
     el.hidden = false;
   }
 
-  $("saveForm").addEventListener("click", async function () {
+  $("saveForm").addEventListener("click", function () {
     if (saving) return;
     var monto = parseMonto($("fMonto").value);
     if (!selPersona) return showErr("Elegí quién carga el gasto.");
@@ -1528,10 +1569,9 @@
     if (!$("fFecha").value) return showErr("Poné la fecha del gasto.");
     if (mediosPago.length && !$("fMedio").value) return showErr("Elegí la forma de pago.");
     if (!isFinite(monto) || monto <= 0) return showErr("El monto tiene que ser mayor a cero.");
-    if (!mode) return showErr("Todavía se está iniciando la app. Esperá unos segundos.");
 
     var previo = editingId ? find(editingId) : null;
-    var body = {
+    guardarGasto(editingId, {
       fecha: $("fFecha").value,
       monto: Math.round(monto * 100) / 100,
       establecimiento: selEst,
@@ -1539,31 +1579,12 @@
       medioPago: $("fMedio").value,
       persona: selPersona,
       nota: $("fNota").value.trim(),
-      creado: (previo && previo.creado) || new Date().toISOString(),
-      editado: editingId ? new Date().toISOString() : ""
-    };
-
-    saving = true;
-    $("saveForm").textContent = "Guardando…";
-    try {
-      await store.saveGasto(editingId, body);
-      closeForm();
-    } catch (e) {
-      showErr(e && e.code === "quota_exceeded"
-        ? "La base llegó al límite de gastos guardados. Avisale a Igna."
-        : "No se pudo guardar. Revisá la conexión y probá de nuevo.");
-    } finally {
-      saving = false;
-      $("saveForm").textContent = editingId ? "Guardar cambios" : "Guardar";
-    }
+      creado: (previo && previo.creado) || new Date().toISOString()
+    });
+    closeForm();
   });
 
-  function find(id) {
-    for (var i = 0; i < gastos.length; i++) if (gastos[i].id === id) return gastos[i];
-    return null;
-  }
-
-  /* ---------- detail ---------- */
+  /* ----------------------------------------------------------- detalle */
   document.addEventListener("click", function (ev) {
     var row = ev.target.closest(".row");
     if (!row) return;
@@ -1591,19 +1612,12 @@
     openForm(g);
   });
 
-  $("deleteDetail").addEventListener("click", async function () {
+  $("deleteDetail").addEventListener("click", function () {
     var g = find(detailId);
-    if (!g || !mode) return;
-    if (!window.confirm("¿Borrar este gasto de " + fmt(Number(g.monto) || 0) + "? No se puede deshacer.")) return;
-    this.textContent = "Borrando…";
-    try {
-      await store.deleteGasto(g.id);
-      $("detailOverlay").hidden = true;
-    } catch (e) {
-      window.alert("No se pudo borrar. Probá de nuevo.");
-    } finally {
-      this.textContent = "Borrar gasto";
-    }
+    if (!g) return;
+    if (!window.confirm("¿Borrar este gasto de " + fmt(Number(g.monto) || 0) + "? Se borra para todos y no se puede deshacer.")) return;
+    borrarGasto(g.id);
+    $("detailOverlay").hidden = true;
   });
 
   document.addEventListener("keydown", function (ev) {
@@ -1612,77 +1626,24 @@
     else if (!$("detailOverlay").hidden) $("detailOverlay").hidden = true;
   });
 
-  /* ---------- boot ---------- */
+  /* ------------------------------------------------------------ arranque */
+  sheetUrl = lsGet(LS.sheet, "") || "";
+  outbox = lsGet(LS.outbox, []);
+  gastos = lsGet(LS.gastos, []).map(function (g) { return normGasto(g.id || newId(), g); }).sort(byDateDesc);
+  proveedores = lsGet(LS.proveedores, []).sort(cmpEs);
+  mediosPago = lsGet(LS.mediosPago, []);
+  ready = true;
+  refreshFilterSelects();
   render();
+  pintarEstado();
+  if (sheetUrl) sincronizar();
 
-  function listFromSnap(snap) {
-    var d = snap && snap.exists ? snap.data() : null;
-    var items = d && Array.isArray(d.items) ? d.items : [];
-    return items.filter(function (x) { return typeof x === "string" && x.trim(); })
-                .map(function (x) { return x.trim(); });
-  }
-
-  (async function connect() {
-    var remote = null;
-    try {
-      remote = window.claude && window.claude.use ? await window.claude.use("db") : null;
-    } catch (e) {
-      remote = null;
-    }
-    if (!remote) {
-      mode = "local";
-      gastos = lsGet(LS.gastos, []).map(function (g) { return normGasto(g.id || newId(), g); }).sort(byDateDesc);
-      proveedores = lsGet(LS.proveedores, []).sort(cmpEs);
-      mediosPago = lsGet(LS.mediosPago, []);
-      sheetUrl = lsGet("ricaso_sheet_url", "") || "";
-      outbox = lsGet("ricaso_outbox", []);
-      ready = true;
-      updateSheetUi();
-      flushOutbox();
-      setConn("local", "En este teléfono");
-      $("localNotice").hidden = false;
-      refreshFilterSelects();
-      render();
-      return;
-    }
-    db = remote;
-    mode = "shared";
-    setConn("ok", "Compartido");
-
-    db.collection("gastos").orderBy("fecha", "desc").limit(1000).onSnapshot(
-      function (snap) {
-        gastos = snap.docs.map(function (d) { return normGasto(d.id, d.data()); });
-        ready = true;
-        refreshFilterSelects();
-        render();
-      },
-      function (err) {
-        ready = true;
-        setConn("bad", err && err.code === "revoked" ? "Sin acceso" : "Sin conexión");
-        render();
-      }
-    );
-
-    db.doc("config/proveedores").onSnapshot(function (snap) {
-      proveedores = listFromSnap(snap).sort(cmpEs);
-      refreshFilterSelects();
-      if (activeTab === "config") renderConfig();
-    });
-
-    outbox = lsGet("ricaso_outbox", []);
-    db.doc("config/sheet").onSnapshot(function (snap) {
-      var d = snap && snap.exists ? snap.data() : null;
-      sheetUrl = (d && typeof d.url === "string") ? d.url : "";
-      updateSheetUi();
-      flushOutbox();
-    });
-
-    db.doc("config/mediosPago").onSnapshot(function (snap) {
-      mediosPago = listFromSnap(snap);
-      refreshFilterSelects();
-      if (activeTab === "config") renderConfig();
-    });
-  })();
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState !== "visible") return;
+    if (!sheetUrl) return;
+    if (Date.now() - lastFetch < 20000) return;
+    sincronizar();
+  });
 })();
 </script>
 
