@@ -841,7 +841,7 @@
 (function () {
   "use strict";
 
-  var APP_VERSION = "2026-09-21.3";
+  var APP_VERSION = "2026-09-27.1";
 
   var ESTS = ["Nueva Córdoba", "Tejeda", "CDP"];
   var EST_VAR = { "Nueva Córdoba": "nc", "Tejeda": "tj", "CDP": "cdp" };
@@ -856,6 +856,35 @@
     sheet: "ricaso_sheet_url",
     outbox: "ricaso_outbox"
   };
+
+  /* ------------------------------------------- link de instalación
+     La dirección del Apps Script puede venir en el link con el que se
+     instala la app:  .../#vincular=<dirección>&quien=Mariano
+     Ese link queda grabado en el ícono de la pantalla de inicio, así el
+     teléfono queda vinculado para siempre y nadie tiene que pegar nada
+     en Config. La dirección nunca se escribe en este repositorio.
+     No borrar el #... de la dirección del sitio: se perdería el vínculo. */
+  var PERSONAS = ["Mariano", "Hernán"];
+
+  function esUrlDeScript(u) {
+    return /^https:\/\/script\.google(usercontent)?\.com\//.test(u);
+  }
+
+  function leerLinkInstalacion() {
+    var hash = (location.hash || "").replace(/^#/, "");
+    if (!hash) return;
+    var p;
+    try { p = new URLSearchParams(hash); } catch (e) { return; }
+    var url = (p.get("vincular") || "").trim();
+    if (esUrlDeScript(url)) lsSet(LS.sheet, url);
+    // La persona del link solo se toma la primera vez: si después se
+    // cambia al cargar un gasto, manda lo último que eligió el teléfono.
+    var quien = p.get("quien"), actual = "";
+    try { actual = localStorage.getItem("ricaso_persona") || ""; } catch (e) {}
+    if (!actual && PERSONAS.indexOf(quien) !== -1) {
+      try { localStorage.setItem("ricaso_persona", quien); } catch (e) {}
+    }
+  }
 
   var gastos = [], proveedores = [], mediosPago = [];
   var sheetUrl = "", outbox = [];
@@ -886,10 +915,44 @@
     return MESES[parseInt(p[1], 10) - 1] + " " + p[0];
   }
   function dayLabel(iso) { var p = iso.split("-"); return p[2] + "/" + p[1]; }
+  // Formato argentino: los puntos son miles y la coma es el decimal.
+  // "100.006,29" -> 100006.29
   function parseMonto(raw) {
-    if (!raw) return NaN;
-    var v = parseFloat(String(raw).replace(/\s/g, "").replace(",", "."));
+    var s = String(raw == null ? "" : raw).replace(/\./g, "").replace(",", ".");
+    if (!s) return NaN;
+    var v = parseFloat(s);
     return isFinite(v) ? v : NaN;
+  }
+
+  // Un número ya guardado, escrito como se ve en el campo de monto.
+  function montoParaEditar(n) {
+    var s = (Math.round(Number(n) * 100) / 100).toFixed(2).split(".");
+    var ent = s[0].replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+    return s[1] === "00" ? ent : ent + "," + s[1];
+  }
+
+  /* Mientras se escribe, pone los puntos de miles y deja una sola coma.
+     Si el teclado del celular solo tiene punto, el punto se toma como coma. */
+  function formatearMonto(el, ev) {
+    var value = el.value, caret = el.selectionStart;
+    if (ev && ev.data === "." && value.slice(0, caret - 1).indexOf(",") === -1 && value.slice(caret).indexOf(",") === -1) {
+      value = value.slice(0, caret - 1) + "," + value.slice(caret);
+    }
+    var before = value.slice(0, caret).replace(/[^\d,]/g, "").length;
+    var clean = value.replace(/[^\d,]/g, "");
+    var coma = clean.indexOf(",");
+    var ent = coma >= 0 ? clean.slice(0, coma) : clean;
+    var dec = coma >= 0 ? clean.slice(coma + 1).replace(/,/g, "").slice(0, 2) : null;
+    ent = ent.replace(/^0+(?=\d)/, "");
+    if (dec !== null && ent === "") ent = "0";
+    var out = ent.replace(/\B(?=(\d{3})+(?!\d))/g, ".") + (dec !== null ? "," + dec : "");
+    el.value = out;
+    var pos = 0, cuenta = 0;
+    while (pos < out.length && cuenta < before) {
+      if (/[\d,]/.test(out[pos])) cuenta++;
+      pos++;
+    }
+    try { el.setSelectionRange(pos, pos); } catch (e) {}
   }
   function esc(s) {
     return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
@@ -1545,14 +1608,9 @@
   });
   wireSeg("segEst", "data-est", function (v) { selEst = v; });
 
-  $("fMonto").addEventListener("input", function () {
-    var v = this.value.replace(/[^0-9,]/g, "");
-    var parts = v.split(",");
-    if (parts.length > 2) v = parts[0] + "," + parts.slice(1).join("");
-    var c = v.split(",");
-    if (c[1] && c[1].length > 2) v = c[0] + "," + c[1].slice(0, 2);
-    this.value = v;
-    var n = parseMonto(v);
+  $("fMonto").addEventListener("input", function (ev) {
+    formatearMonto(this, ev);
+    var n = parseMonto(this.value);
     $("montoHint").textContent = isFinite(n) && n > 0 ? fmt(n) : "Usá la coma para los centavos.";
   });
 
@@ -1579,7 +1637,7 @@
       mediosPago.length ? "Elegí una" : "Cargá formas de pago en Config",
       existing ? existing.medioPago : "");
     $("fNota").value = existing ? (existing.nota || "") : "";
-    $("fMonto").value = existing ? String(existing.monto).replace(".", ",") : "";
+    $("fMonto").value = existing ? montoParaEditar(existing.monto) : "";
     $("montoHint").textContent = existing ? fmt(Number(existing.monto) || 0) : "Usá la coma para los centavos.";
 
     $("formOverlay").hidden = false;
@@ -1664,6 +1722,7 @@
   });
 
   /* ------------------------------------------------------------ arranque */
+  leerLinkInstalacion();
   sheetUrl = lsGet(LS.sheet, "") || "";
   outbox = lsGet(LS.outbox, []);
   gastos = lsGet(LS.gastos, []).map(function (g) { return normGasto(g.id || newId(), g); }).sort(byDateDesc);
@@ -1680,6 +1739,19 @@
     if (!sheetUrl) return;
     if (Date.now() - lastFetch < 20000) return;
     sincronizar();
+  });
+
+  /* Reintentos solos, sin que nadie toque nada: lo que quedó pendiente
+     cada 30 segundos, la planilla completa cada 5 minutos, y en cuanto
+     el teléfono recupera la señal. */
+  setInterval(function () {
+    if (sheetUrl && !syncing && outbox.length) sincronizar();
+  }, 30000);
+  setInterval(function () {
+    if (sheetUrl && !syncing) sincronizar();
+  }, 300000);
+  window.addEventListener("online", function () {
+    if (sheetUrl) sincronizar();
   });
 })();
 </script>
