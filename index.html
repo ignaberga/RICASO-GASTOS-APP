@@ -251,7 +251,7 @@
   .list { display: flex; flex-direction: column; gap: 7px; }
   .row {
     display: grid;
-    grid-template-columns: 3px 1fr auto;
+    grid-template-columns: 3px 1fr auto auto;
     gap: 12px;
     align-items: center;
     background: var(--surface);
@@ -283,12 +283,29 @@
     white-space: nowrap;
   }
   .row-amt {
-    padding: 11px 13px 11px 0;
+    padding: 11px 4px 11px 0;
     font-size: 15px;
     font-weight: 700;
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
+  .edit-btn {
+    width: 34px; height: 34px;
+    margin-right: 9px;
+    border-radius: 50%;
+    border: none;
+    background: var(--bg);
+    color: var(--ink-faint);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    flex: none;
+  }
+  .edit-btn svg { width: 16px; height: 16px; }
+  .edit-btn:active { background: var(--line); color: var(--ink-soft); }
+  .act-note { font-size: 13px; color: var(--ink-faint); margin: 14px 0 0; line-height: 1.5; }
+
   .est-tag {
     display: inline-block;
     font-size: 10.5px;
@@ -720,17 +737,12 @@
 
     <div class="acc">
       <button class="acc-head" data-acc="sheet">
-        <span>Planilla de Google</span>
-        <span class="acc-meta"><span id="sheetState">Sin vincular</span><span>&#9662;</span></span>
+        <span>Sincronización</span>
+        <span class="acc-meta"><span id="sheetState">—</span><span>&#9662;</span></span>
       </button>
       <div class="acc-body" id="accSheet" hidden>
-        <p class="acc-note">La planilla es la base de datos: los gastos y las listas se guardan ahí y los tres teléfonos ven lo mismo. Pegá la dirección de la <strong>aplicación web de Apps Script</strong>, la que termina en <code>/exec</code>.</p>
-        <div class="cfg-add" style="margin-top:0">
-          <input type="text" id="sheetUrlInput" placeholder="https://script.google.com/macros/s/.../exec" autocomplete="off" spellcheck="false">
-          <button id="saveSheetUrl">Guardar</button>
-        </div>
+        <p class="acc-note">Los gastos y las listas viven en la planilla de Google, así los tres teléfonos ven lo mismo. La app se sincroniza sola: al abrirla, cada 5 minutos y en cuanto vuelve la señal. No hay nada que configurar.</p>
         <div class="sheet-actions" style="margin-top:12px">
-          <button type="button" id="testSheet">Probar conexión</button>
           <button type="button" id="resyncSheet">Actualizar ahora</button>
         </div>
         <div class="cfg-msg" id="msgSheet" hidden></div>
@@ -824,15 +836,15 @@
 <!-- DETALLE -->
 <div class="overlay" id="detailOverlay" hidden>
   <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="detailTitle">
-    <h2 id="detailTitle">Detalle</h2>
+    <h2 id="detailTitle">¿Qué querés hacer?</h2>
     <div class="detail-amt" id="dAmt">$ 0</div>
     <div class="detail-list" id="dList"></div>
     <div class="sheet-actions">
-      <button type="button" id="closeDetail">Cerrar</button>
-      <button type="button" id="editDetail">Editar</button>
+      <button type="button" class="primary" id="editDetail">Editar</button>
+      <button type="button" class="danger" id="deleteDetail">Eliminar</button>
     </div>
     <div class="sheet-actions" style="margin-top:9px">
-      <button type="button" class="danger" id="deleteDetail">Borrar gasto</button>
+      <button type="button" id="closeDetail">Cancelar</button>
     </div>
   </div>
 </div>
@@ -841,7 +853,7 @@
 (function () {
   "use strict";
 
-  var APP_VERSION = "2026-09-27.1";
+  var APP_VERSION = "2026-09-27.2";
 
   var ESTS = ["Nueva Córdoba", "Tejeda", "CDP"];
   var EST_VAR = { "Nueva Córdoba": "nc", "Tejeda": "tj", "CDP": "cdp" };
@@ -1159,7 +1171,7 @@
     if (aviso) {
       var msg = "";
       if (!sheetUrl) {
-        msg = "<strong>Falta vincular la planilla.</strong> Hasta que la conectes en Config, los gastos quedan solo en este teléfono y no los ven los demás.";
+        msg = "<strong>Este teléfono no está vinculado a la planilla.</strong> Abrí el link que te mandó Igna y agregalo a la pantalla de inicio: con eso queda vinculado solo. Mientras tanto los gastos quedan guardados acá y no los ven los demás.";
       } else if (lastError === "viejo") {
         msg = "<strong>La planilla tiene la versión vieja del script.</strong> La app no puede leer los gastos de ahí hasta que se actualice. Mientras tanto seguís viendo y cargando los de este teléfono, y nada se pierde.";
       } else if (lastError === "lectura") {
@@ -1170,9 +1182,7 @@
     }
 
     var st = $("sheetState");
-    if (st) st.textContent = sheetUrl ? (syncing ? "Sincronizando…" : "Vinculada") : "Sin vincular";
-    var inp = $("sheetUrlInput");
-    if (inp && document.activeElement !== inp) inp.value = sheetUrl;
+    if (st) st.textContent = txt.textContent;
     var note = $("pendingNote");
     if (note) {
       note.hidden = !outbox.length;
@@ -1216,7 +1226,7 @@
     var bits = [dayLabel(g.fecha), esc(g.persona || "—")];
     if (g.medioPago) bits.push(esc(g.medioPago));
     if (g.nota) bits.push(esc(g.nota));
-    return '<button class="row" data-id="' + esc(g.id) + '">' +
+    return '<div class="row" data-id="' + esc(g.id) + '">' +
       '<span class="stripe" style="background:var(--' + v + ')"></span>' +
       '<span class="row-mid">' +
         '<span class="row-top">' + titulo + ' ' +
@@ -1225,7 +1235,12 @@
         '<span class="row-sub">' + bits.join(" · ") + '</span>' +
       '</span>' +
       '<span class="row-amt">' + fmt(Number(g.monto) || 0) + '</span>' +
-    '</button>';
+      '<button type="button" class="edit-btn" data-edit="' + esc(g.id) + '" aria-label="Editar o eliminar este gasto">' +
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+          '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>' +
+        '</svg>' +
+      '</button>' +
+    '</div>';
   }
 
   function renderList(el, arr, emptyMsg) {
@@ -1527,46 +1542,8 @@
     el.hidden = !text;
   }
 
-  $("saveSheetUrl").addEventListener("click", function () {
-    var url = $("sheetUrlInput").value.trim();
-    if (url && !/^https:\/\/script\.google\.com\/macros\/s\/[^\/]+\/exec$/.test(url)) {
-      return sheetMsg("Esa dirección no tiene la forma correcta. Empieza con https://script.google.com/macros/s/ y termina en /exec.", false);
-    }
-    sheetUrl = url;
-    lsSet(LS.sheet, url);
-    sheetMsg(url ? "Dirección guardada. Probá la conexión." : "Se quitó la dirección.", true);
-    pintarEstado();
-    if (url) sincronizar();
-  });
-
-  $("testSheet").addEventListener("click", async function () {
-    if (!sheetUrl) return sheetMsg("Primero guardá la dirección.", false);
-    sheetMsg("Probando…", true);
-    try {
-      var data = await pedirEstado();
-      if (estadoValido(data)) {
-        aplicarEstado(data);
-        lastFetch = Date.now();
-        lastError = "";
-        render();
-        pintarEstado();
-        sheetMsg("Conectada. En la planilla hay " + data.gastos.length + " gastos, " +
-                 (data.proveedores || []).length + " proveedores y " +
-                 (data.mediosPago || []).length + " formas de pago.", true);
-      } else if (data && data.ok) {
-        lastError = "viejo";
-        pintarEstado();
-        sheetMsg("La planilla contesta, pero con la versión vieja del script: no devuelve los gastos. Hay que pegar el código nuevo y volver a implementar.", false);
-      } else {
-        sheetMsg("La planilla contestó con un formato inesperado.", false);
-      }
-    } catch (e) {
-      sheetMsg("No se pudo leer la planilla. Revisá que la dirección termine en /exec, que el acceso sea «Cualquier usuario», y que hayas implementado la versión nueva del código.", false);
-    }
-  });
-
   $("resyncSheet").addEventListener("click", async function () {
-    if (!sheetUrl) return sheetMsg("Primero guardá la dirección.", false);
+    if (!sheetUrl) return sheetMsg("Este teléfono todavía no está vinculado a la planilla. Abrí el link que te mandó Igna.", false);
     sheetMsg("Actualizando…", true);
     await sincronizar();
     sheetMsg(outbox.length
@@ -1679,11 +1656,11 @@
     closeForm();
   });
 
-  /* ----------------------------------------------------------- detalle */
+  /* ------------------------------------- lápiz: editar / eliminar / cancelar */
   document.addEventListener("click", function (ev) {
-    var row = ev.target.closest(".row");
-    if (!row) return;
-    var g = find(row.getAttribute("data-id"));
+    var lapiz = ev.target.closest(".edit-btn");
+    if (!lapiz) return;
+    var g = find(lapiz.getAttribute("data-edit"));
     if (!g) return;
     detailId = g.id;
     $("dAmt").textContent = fmt(Number(g.monto) || 0);
@@ -1710,9 +1687,13 @@
   $("deleteDetail").addEventListener("click", function () {
     var g = find(detailId);
     if (!g) return;
-    if (!window.confirm("¿Borrar este gasto de " + fmt(Number(g.monto) || 0) + "? Se borra para todos y no se puede deshacer.")) return;
-    borrarGasto(g.id);
+    var detalle = (g.proveedor || "Sin proveedor") + " · " + fmt(Number(g.monto) || 0) +
+                  " · " + g.fecha.split("-").reverse().join("/") + " · " + g.establecimiento;
+    // Primero se cierra el menú: si cancela, vuelve a la lista y no queda trabado.
     $("detailOverlay").hidden = true;
+    if (!window.confirm("¿Estás seguro de que querés eliminar este gasto?\n\n" + detalle +
+                        "\n\nSe borra también de la planilla y de los otros teléfonos. No se puede deshacer.")) return;
+    borrarGasto(g.id);
   });
 
   document.addEventListener("keydown", function (ev) {

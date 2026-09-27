@@ -132,6 +132,12 @@ el celular en el mostrador, apurado. **Menos pasos es mejor.**
 - Septiembre 2026 (27): se trajo de la app de La Emilia el **link de instalación**
   con la dirección de la planilla adentro, los **reintentos automáticos** (30 s /
   5 min / al volver la señal) y el **monto con puntos de miles**.
+- Cada gasto tiene un **lápiz** que abre Editar / Eliminar / Cancelar. Tocar la
+  fila ya no abre nada. Eliminar cierra el menú y después pide confirmación
+  mostrando proveedor, monto, fecha y local; si se cancela, vuelve a la lista.
+- De Config se sacó **vincular la planilla** (el campo de la dirección, "Guardar"
+  y "Probar conexión"): con el link de instalación no hace falta y solo confundía.
+  Quedó la sección **Sincronización**, con el estado y "Actualizar ahora".
 
 ## Pendientes conversados
 
