@@ -7,13 +7,15 @@ Es un solo archivo, `index.html`, sin instalación ni servidor.
 
 ## Qué hace
 
-Registra un gasto con: quién lo carga, local (Nueva Córdoba, Tejeda o CDP),
-fecha, proveedor, forma de pago, monto y nota.
+Registra un gasto con: quién lo carga, local, fecha, proveedor, forma de pago,
+monto y nota. El local puede ser **Nueva Córdoba**, **Tejeda**, **CDP** u
+**Olveira Anello SAS**, que es para los gastos de la sociedad en general que no
+son de un local en particular.
 
 - **Inicio** — total del mes, abierto por local, y los últimos movimientos.
 - **Historial** — filtros por local, persona, forma de pago, proveedor y texto.
 - **Resumen** — el mes por forma de pago, por local, por proveedor y por persona.
-- **Config** — listas de proveedores y formas de pago, y el vínculo con la planilla.
+- **Config** — listas de proveedores y formas de pago, y el estado de la sincronización.
 
 ## Dónde viven los datos
 
@@ -23,8 +25,10 @@ planilla al abrir la app y escriben en ella cada cambio, así todos ven lo
 mismo: si Mariano agrega un proveedor, le aparece a Hernán.
 
 Cada teléfono guarda además una copia local, que sirve para que la app abra al
-instante y para seguir cargando sin señal. Lo que quede sin subir se marca en
-Config y se manda solo cuando vuelve la conexión.
+instante y para seguir cargando sin señal. Al guardar, el formulario se cierra
+enseguida y el gasto viaja a la planilla por detrás: nadie tiene que esperar.
+Lo que todavía no llegó se ve arriba a la derecha ("2 sin enviar") y se manda
+solo: cada 30 segundos, cuando vuelve la señal y al abrir la app.
 
 La planilla tiene dos hojas, las dos editables a mano desde Google:
 
@@ -33,10 +37,9 @@ La planilla tiene dos hojas, las dos editables a mano desde Google:
 | `Gastos` | Un gasto por fila, identificado por su ID |
 | `Listas` | Columna A: proveedores. Columna B: formas de pago |
 
-Se conecta desde Config → Planilla de Google, pegando la dirección de la
-aplicación web de Apps Script (la que termina en `/exec`). No es el link de la
-planilla: es el que da Google al publicar el script. Hay que hacerlo una vez
-en cada teléfono.
+Cada teléfono queda conectado con la planilla al instalar la app desde el link
+que manda Ignacio por mensaje (trae adentro la dirección del Apps Script). Ese
+link no se publica en ningún lado.
 
 Cada gasto viaja con un ID, así que editar corrige la fila existente en lugar
 de duplicarla, y renombrar un proveedor lo corrige en todos los gastos de una

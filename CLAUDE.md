@@ -58,17 +58,26 @@ el celular en el mostrador, apurado. **Menos pasos es mejor.**
   `Listas` (columna A proveedores, columna B formas de pago). Las dos se pueden
   editar a mano desde Google y los teléfonos lo levantan.
 - La app lee con `GET` y escribe con `POST`. Operaciones: **`upsert`**,
-  **`delete`**, **`listas`**, **`renombrar`** y **`ping`**. Todas se pueden
-  repetir sin duplicar. La respuesta trae siempre el estado completo:
-  `{ok:true, api:2, gastos, proveedores, mediosPago, hora}`.
+  **`delete`**, **`listas`**, **`renombrar`** y **`ping`**, más **`lote`**
+  (`{op:"lote", ops:[…]}`), que manda toda la cola junta y en orden en un solo
+  envío. Todas se pueden repetir sin duplicar. La respuesta trae siempre el
+  estado completo: `{ok:true, api:3, gastos, proveedores, mediosPago, hora}`.
+  Si el script contesta `api` menor a 3 (versión anterior, que ignora `lote`),
+  la app vuelve sola a mandar los cambios de a uno.
 - Un gasto tiene: `id`, `fecha`, `establecimiento`, `proveedor`, `medioPago`,
   `monto`, `persona`, `nota`, `creado`.
 - **Cola de pendientes** (`ricaso_outbox`): cada cambio se guarda primero en el
-  celular y se manda en orden, con reintentos (cada 30 s si hay algo pendiente,
-  la planilla completa cada 5 minutos, al volver la señal y al abrir la app),
-  hasta que la planilla confirma. Al leer la planilla, los pendientes se aplican
-  encima, así nada cargado sin señal desaparece. El chip de estado muestra
-  cuántos faltan subir.
+  celular, numerado (`n`), y se manda en orden, con reintentos (cada 30 s si hay
+  algo pendiente, la planilla completa cada 5 minutos, al volver la señal y al
+  volver a la app). Un cambio sale de la cola **solo** cuando la planilla
+  confirma ese envío, o cuando al leerla ya se ve reflejado. Nunca se manda "a
+  ciegas". Si llega un cambio mientras otro viaja, se manda apenas termina. Hay
+  un solo pendiente por gasto: editar de nuevo reemplaza al anterior. Al leer la
+  planilla, los pendientes se aplican encima, así nada cargado sin señal
+  desaparece. Cada pedido lleva un número y no se aplica una respuesta más vieja
+  que la última. Los pedidos se cortan a los 25 s (lectura) / 45 s (envío) para
+  que la mala señal no trabe la sincronización. El chip de estado muestra
+  "N sin enviar".
 - Cada teléfono guarda una copia local (`ricaso_gastos`, `ricaso_proveedores`,
   `ricaso_mediosPago`) para abrir al instante y funcionar sin señal.
 - La dirección del Apps Script (la que termina en `/exec`) se guarda en
@@ -78,6 +87,10 @@ el celular en el mostrador, apurado. **Menos pasos es mejor.**
   nunca (en iPhone, Safari y el ícono guardan datos por separado). **No borrar
   el `#…` de la dirección** ni agregar un manifest con `start_url`, porque se
   perdería. Config sigue teniendo el campo para pegarla a mano, por si acaso.
+- Locales (constante `ESTS`): `Nueva Córdoba`, `Tejeda`, `CDP` y
+  `Olveira Anello SAS` (gastos de la sociedad en general). En el formulario van
+  los tres locales en una fila y la sociedad abajo, a lo ancho. Un local que la
+  app no conoce se respeta tal cual (antes se convertía en CDP).
 - Personas que cargan: `Mariano` y `Hernán` (constante `PERSONAS`). Cada teléfono
   recuerda quién lo usa (`ricaso_persona`) y no lo vuelve a preguntar.
 - Los links de instalación **no se generan dentro de la app**: se los arma Claude
@@ -115,7 +128,8 @@ el celular en el mostrador, apurado. **Menos pasos es mejor.**
   la planilla no se renombran desde el código: dejarían huérfanos los gastos
   viejos. Para eso está la operación `renombrar`.
 - Al releer la planilla no se puede pisar lo que la persona está escribiendo en
-  el formulario abierto.
+  el formulario abierto (los desplegables se rearman conservando lo elegido) ni
+  el nombre que está escribiendo al renombrar en Config.
 - En iPhone, Safari y el ícono de la pantalla de inicio guardan los datos por
   separado, e iOS puede borrar datos de sitios poco visitados. Tenerlo en cuenta
   en todo lo que dependa de `localStorage`.
@@ -139,8 +153,19 @@ el celular en el mostrador, apurado. **Menos pasos es mejor.**
   y "Probar conexión"): con el link de instalación no hace falta y solo confundía.
   Quedó la sección **Sincronización**, con el estado y "Actualizar ahora".
 
+- Noviembre 2026 (12): **fluidez**. Se arregló un caso que perdía un gasto si
+  se cargaba o editaba otro mientras el primero todavía viajaba a la planilla.
+  Se sacó el envío "a ciegas", se agregó el envío de toda la cola junta
+  (`lote`, script `api:3`, escritura en bloque), cortes por tiempo, numeración
+  de lecturas y se cuida lo elegido en el formulario abierto. CDP queda, y se
+  agregó **Olveira Anello SAS** para los gastos de la sociedad en general. La
+  app todavía no se había usado: se arranca de cero.
+- Pruebas: planilla simulada que corre el `Codigo-AppsScript.gs` real en Node, y
+  la app en Chromium a 360 px con señal, sin señal (incluido cerrar y reabrir),
+  planilla lenta (4 s), otro teléfono, respuesta incompleta, script anterior y
+  fecha a las 23:30.
+
 ## Pendientes conversados
 
-- Ignacio tiene que confirmar que la planilla ya tiene pegada la última versión
-  del Apps Script. Si el chip de estado dice "Script viejo", todavía no está.
-- Definir si CDP sigue en la lista de locales o si se saca.
+- Ignacio tiene que pegar en la planilla el Apps Script con `api: 3`. Mientras
+  no lo haga, la app funciona igual pero manda los cambios de a uno.

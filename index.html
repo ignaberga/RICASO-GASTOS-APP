@@ -37,6 +37,8 @@
     --tj-bg: #F3E7EE;
     --cdp: #4F7A4A;
     --cdp-bg: #E8F0E6;
+    --oa: #5B6470;
+    --oa-bg: #E9ECEF;
     --danger: #A3342A;
     --radius: 14px;
     --radius-sm: 10px;
@@ -63,6 +65,8 @@
       --tj-bg: #33202B;
       --cdp: #9DC697;
       --cdp-bg: #1F2D1D;
+    --oa: #AEB7C2;
+    --oa-bg: #23272C;
       --danger: #E28377;
       --shadow: 0 1px 2px rgba(0,0,0,.3), 0 6px 18px rgba(0,0,0,.28);
     }
@@ -87,6 +91,8 @@
     --tj-bg: #33202B;
     --cdp: #9DC697;
     --cdp-bg: #1F2D1D;
+    --oa: #AEB7C2;
+    --oa-bg: #23272C;
     --danger: #E28377;
     --shadow: 0 1px 2px rgba(0,0,0,.3), 0 6px 18px rgba(0,0,0,.28);
   }
@@ -534,6 +540,7 @@
   .field textarea { min-height: 62px; resize: vertical; }
   .seg { display: flex; gap: 7px; }
   .seg.three { display: grid; grid-template-columns: repeat(3, 1fr); }
+  .seg.three .ancho { grid-column: 1 / -1; }
   .seg button {
     flex: 1;
     padding: 11px 4px;
@@ -553,6 +560,7 @@
   .seg.est button[aria-pressed="true"][data-est="Nueva Córdoba"] { background: var(--nc); border-color: var(--nc); color: #fff; }
   .seg.est button[aria-pressed="true"][data-est="Tejeda"] { background: var(--tj); border-color: var(--tj); color: #fff; }
   .seg.est button[aria-pressed="true"][data-est="CDP"] { background: var(--cdp); border-color: var(--cdp); color: #fff; }
+  .seg.est button[aria-pressed="true"][data-est="Olveira Anello SAS"] { background: var(--oa); border-color: var(--oa); color: #fff; }
 
   .money-wrap { position: relative; }
   .money-wrap .cur {
@@ -666,6 +674,7 @@
         <option value="Nueva Córdoba">Nueva Córdoba</option>
         <option value="Tejeda">Tejeda</option>
         <option value="CDP">CDP</option>
+        <option value="Olveira Anello SAS">Olveira Anello SAS</option>
       </select>
       <select id="fltPersona" aria-label="Filtrar por persona">
         <option value="">Mariano y Hernán</option>
@@ -793,6 +802,7 @@
         <button type="button" data-est="Nueva Córdoba" aria-pressed="false">Nueva<br>Córdoba</button>
         <button type="button" data-est="Tejeda" aria-pressed="false">Tejeda</button>
         <button type="button" data-est="CDP" aria-pressed="false">CDP</button>
+        <button type="button" data-est="Olveira Anello SAS" aria-pressed="false" class="ancho">Olveira Anello SAS</button>
       </div>
     </div>
 
@@ -853,11 +863,13 @@
 (function () {
   "use strict";
 
-  var APP_VERSION = "2026-09-27.2";
+  var APP_VERSION = "2026-11-12.1";
 
-  var ESTS = ["Nueva Córdoba", "Tejeda", "CDP"];
-  var EST_VAR = { "Nueva Córdoba": "nc", "Tejeda": "tj", "CDP": "cdp" };
-  var EST_SHORT = { "Nueva Córdoba": "N. CÓRDOBA", "Tejeda": "TEJEDA", "CDP": "CDP" };
+  // "Olveira Anello SAS" es para los gastos de la sociedad en general,
+  // que no son de un local en particular.
+  var ESTS = ["Nueva Córdoba", "Tejeda", "CDP", "Olveira Anello SAS"];
+  var EST_VAR = { "Nueva Córdoba": "nc", "Tejeda": "tj", "CDP": "cdp", "Olveira Anello SAS": "oa" };
+  var EST_SHORT = { "Nueva Córdoba": "N. CÓRDOBA", "Tejeda": "TEJEDA", "CDP": "CDP", "Olveira Anello SAS": "O. ANELLO" };
   var MESES = ["enero","febrero","marzo","abril","mayo","junio",
                "julio","agosto","septiembre","octubre","noviembre","diciembre"];
 
@@ -1004,7 +1016,7 @@
       id: id,
       fecha: String(data.fecha || todayKey()).slice(0, 10),
       monto: Number(data.monto) || 0,
-      establecimiento: ESTS.indexOf(data.establecimiento) !== -1 ? data.establecimiento : "CDP",
+      establecimiento: String(data.establecimiento || ""),
       proveedor: data.proveedor || "",
       medioPago: data.medioPago || "",
       persona: data.persona || "",
@@ -1027,30 +1039,60 @@
   }
   function guardarCola() { lsSet(LS.outbox, outbox); }
 
-  /* --------------------------------------------------------- la planilla */
-  async function pedirEstado() {
-    var sep = sheetUrl.indexOf("?") === -1 ? "?" : "&";
-    var res = await fetch(sheetUrl + sep + "t=" + Date.now(), { method: "GET" });
-    return await res.json();
+  /* --------------------------------------------------------- la planilla
+     Cómo viaja cada cambio:
+     1. Se aplica en pantalla y en el teléfono al instante (nadie espera).
+     2. Entra en la cola de pendientes (ricaso_outbox), numerado.
+     3. Se manda por detrás, todo junto en un solo envío y en orden.
+     4. Sale de la cola recién cuando la planilla confirma, o cuando al
+        leerla se ve que ya lo tiene.
+     Al leer la planilla, lo que sigue pendiente se aplica encima, así nada
+     desaparece y vuelve a aparecer. */
+
+  var ESPERA_LECTURA = 25000;   // con mala señal, cortar y reintentar después
+  var ESPERA_ENVIO = 45000;
+  var MAX_POR_ENVIO = 40;
+
+  var numPedido = 0;           // cada pedido a la planilla lleva un número
+  var ultimoAplicado = 0;      // y no se aplica uno más viejo que el último
+  var otraVez = false;         // llegó un cambio mientras se sincronizaba
+  var modoLote = true;         // el script nuevo acepta todo junto; el viejo no
+
+  function claveDe(it) {
+    if (it.op === "upsert" || it.op === "delete") return "g:" + it.id;
+    if (it.op === "listas") return "listas";
+    return it.op + ":" + (it.id || "");
+  }
+  function sigNumero() {
+    var max = 0;
+    outbox.forEach(function (x) { if (x.n > max) max = x.n; });
+    return max + 1;
   }
 
-  async function enviar(payload) {
-    var opts = {
+  async function pedirConTiempo(url, opts, ms) {
+    var ctrl = typeof AbortController === "function" ? new AbortController() : null;
+    var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, ms) : null;
+    if (ctrl) opts.signal = ctrl.signal;
+    try {
+      var res = await fetch(url, opts);
+      return await res.json();
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  function pedirEstado() {
+    var sep = sheetUrl.indexOf("?") === -1 ? "?" : "&";
+    return pedirConTiempo(sheetUrl + sep + "action=get_all&t=" + Date.now(),
+                          { method: "GET", cache: "no-store" }, ESPERA_LECTURA);
+  }
+
+  function enviar(payload) {
+    return pedirConTiempo(sheetUrl, {
       method: "POST",
       headers: { "Content-Type": "text/plain;charset=utf-8" },
       body: JSON.stringify(payload)
-    };
-    try {
-      var res = await fetch(sheetUrl, opts);
-      var data = await res.json();
-      if (data && data.ok) return data;
-      throw new Error(data && data.error ? data.error : "respuesta inesperada");
-    } catch (e) {
-      // El navegador no dejó leer la respuesta: mandamos a ciegas.
-      opts.mode = "no-cors";
-      await fetch(sheetUrl, opts);
-      return { ok: true, ciego: true };
-    }
+    }, ESPERA_ENVIO);
   }
 
   /** Una respuesta solo sirve si trae de verdad la lista de gastos.
@@ -1060,6 +1102,46 @@
     return !!(data && data.ok === true && Array.isArray(data.gastos));
   }
 
+  function sacarDeCola(items) {
+    var nums = {};
+    items.forEach(function (it) { nums[it.n] = true; });
+    outbox = outbox.filter(function (x) { return !nums[x.n]; });
+    guardarCola();
+  }
+
+  function mismoGasto(a, b) {
+    return a.fecha === b.fecha && a.establecimiento === b.establecimiento &&
+      a.proveedor === b.proveedor && a.medioPago === b.medioPago &&
+      a.persona === b.persona && a.nota === b.nota &&
+      Math.round(Number(a.monto) * 100) === Math.round(Number(b.monto) * 100);
+  }
+  function mismaLista(a, b) {
+    return a.length === b.length && a.every(function (x, i) { return x === b[i]; });
+  }
+
+  /** Saca de la cola lo que la planilla ya tiene (por ejemplo, si el envío
+   *  llegó pero la respuesta se cortó por la señal). */
+  function descartarYaReflejados(data) {
+    var porId = {};
+    data.gastos.forEach(function (g) { porId[String(g.id)] = g; });
+    var pv = (data.proveedores || []).slice().sort(cmpEs);
+    var mp = data.mediosPago || [];
+    var antes = outbox.length;
+    outbox = outbox.filter(function (it) {
+      if (it.op === "upsert") {
+        var s = porId[it.id];
+        return !(s && mismoGasto(normGasto(it.id, s), normGasto(it.id, it.gasto)));
+      }
+      if (it.op === "delete") return !!porId[it.id];
+      if (it.op === "listas") {
+        return !(mismaLista(pv, (it.proveedores || []).slice().sort(cmpEs)) &&
+                 mismaLista(mp, it.mediosPago || []));
+      }
+      return true;
+    });
+    if (outbox.length !== antes) guardarCola();
+  }
+
   function aplicarCola() {
     outbox.forEach(function (it) {
       if (it.op === "upsert") {
@@ -1067,7 +1149,7 @@
       } else if (it.op === "delete") {
         gastos = gastos.filter(function (g) { return g.id !== it.id; });
       } else if (it.op === "listas") {
-        proveedores = (it.proveedores || []).slice();
+        proveedores = (it.proveedores || []).slice().sort(cmpEs);
         mediosPago = (it.mediosPago || []).slice();
       } else if (it.op === "renombrar") {
         gastos.forEach(function (g) { if (g[it.campo] === it.viejo) g[it.campo] = it.nuevo; });
@@ -1076,85 +1158,126 @@
     gastos.sort(byDateDesc);
   }
 
-  /** Devuelve true si quedó algo por subir y conviene sincronizar de nuevo. */
-  function aplicarEstado(data) {
+  /** Aplica lo que vino de la planilla. Devuelve true si quedó algo nuevo
+   *  por subir (el rescate de abajo). */
+  function aplicarEstado(data, num) {
     if (!estadoValido(data)) return false;
+    if (num < ultimoAplicado) return false;     // llegó tarde: ya hay algo más nuevo
+    ultimoAplicado = num;
+
+    descartarYaReflejados(data);
 
     var pv = Array.isArray(data.proveedores) ? data.proveedores : [];
     var mp = Array.isArray(data.mediosPago) ? data.mediosPago : [];
-    var pendientes = [];
+    var rescate = [];
 
     if (!data.gastos.length && gastos.length && !rescateHecho) {
       // La planilla vino vacía pero este teléfono tiene gastos: los subimos
       // en lugar de borrarlos. Una sola vez por apertura, para no ciclar.
       rescateHecho = true;
-      gastos.forEach(function (g) { pendientes.push({ op: "upsert", id: g.id, gasto: g }); });
+      gastos.forEach(function (g) { rescate.push({ op: "upsert", id: g.id, gasto: g }); });
     } else {
       gastos = data.gastos.map(function (g) { return normGasto(String(g.id), g); });
     }
 
     if (!pv.length && !mp.length && (proveedores.length || mediosPago.length)) {
-      pendientes.push({ op: "listas", id: "__listas__", proveedores: proveedores, mediosPago: mediosPago });
+      rescate.push({ op: "listas", id: "__listas__", proveedores: proveedores, mediosPago: mediosPago });
     } else {
       proveedores = pv.slice().sort(cmpEs);
       mediosPago = mp.slice();
     }
 
-    pendientes.forEach(function (it) {
-      outbox = outbox.filter(function (x) { return !(x.op === it.op && x.id === it.id); }).concat([it]);
-    });
-    if (pendientes.length) guardarCola();
+    rescate.forEach(function (it) { meterEnCola(it); });
+    if (rescate.length) guardarCola();
 
     aplicarCola();
     guardarCache();
     refreshFilterSelects();
-    return pendientes.length > 0;
+    refrescarFormAbierto();
+    return rescate.length > 0;
+  }
+
+  /** Manda la cola en orden. Devuelve el último estado que contestó la
+   *  planilla, o null si no se pudo (sin señal, planilla ocupada…). */
+  async function subirCola() {
+    var ultimo = null;
+    for (var vuelta = 0; vuelta < 20 && outbox.length; vuelta++) {
+      var lote = modoLote ? outbox.slice(0, MAX_POR_ENVIO) : outbox.slice(0, 1);
+      var num = ++numPedido;
+      var r;
+      try {
+        r = await enviar(modoLote
+          ? { op: "lote", ops: lote }
+          : lote[0]);
+      } catch (e) {
+        return { estado: ultimo, fallo: "red" };
+      }
+      if (!estadoValido(r)) {
+        return { estado: ultimo, fallo: r && r.ok === true ? "viejo" : "planilla" };
+      }
+      if (modoLote && !(r.api >= 3)) {
+        // El script de la planilla es el anterior y no entiende "todo junto":
+        // no tocó nada. Seguimos de a uno, que sí lo entiende.
+        modoLote = false;
+        continue;
+      }
+      sacarDeCola(lote);
+      ultimo = { data: r, num: num };
+    }
+    return { estado: ultimo, fallo: "" };
   }
 
   async function sincronizar() {
-    if (!sheetUrl || syncing) { pintarEstado(); return; }
+    if (!sheetUrl) { pintarEstado(); return; }
+    if (syncing) { otraVez = true; return; }
     syncing = true;
-    lastError = "";
+    otraVez = false;
     pintarEstado();
-    var faltaSubir = false;
+    var faltaSubir = false, error = "";
     try {
-      var ultimo = null, quedan = [];
-      for (var i = 0; i < outbox.length; i++) {
+      var estado = null;
+      if (outbox.length) {
+        var s = await subirCola();
+        estado = s.estado;
+        error = s.fallo;
+      }
+      // Después de un envío confirmado, la respuesta ya trae la planilla
+      // entera: no hace falta otra lectura. Si no hubo envío, se lee una vez.
+      if (!estado && !error) {
+        var num = ++numPedido;
         try {
-          var r = await enviar(outbox[i]);
-          if (estadoValido(r) && !r.ciego) ultimo = r;
+          var d = await pedirEstado();
+          if (estadoValido(d)) estado = { data: d, num: num };
+          else error = d && d.ok === true ? "viejo" : "planilla";
         } catch (e) {
-          quedan.push(outbox[i]);
+          error = "red";
         }
       }
-      outbox = quedan;
-      guardarCola();
-
-      var data = ultimo;
-      if (!data) {
-        try { data = await pedirEstado(); } catch (e) { data = null; }
-      }
-      if (estadoValido(data)) {
-        faltaSubir = aplicarEstado(data);
+      if (estado) {
+        faltaSubir = aplicarEstado(estado.data, estado.num);
         lastFetch = Date.now();
-      } else if (data && data.ok) {
-        // Contesta, pero no manda los gastos: es el script viejo.
-        lastError = "viejo";
-      } else {
-        lastError = "lectura";
       }
+      lastError = error;
     } finally {
       syncing = false;
       ready = true;
       pintarEstado();
       render();
-      if (faltaSubir) setTimeout(sincronizar, 500);
+      if (otraVez || (faltaSubir && !error)) setTimeout(sincronizar, 300);
     }
   }
 
+  var ultimoN = 0;
+  function meterEnCola(item) {
+    item.n = ultimoN = Math.max(ultimoN + 1, sigNumero());
+    var k = claveDe(item);
+    outbox = outbox.filter(function (x) { return claveDe(x) !== k; }).concat([item]);
+  }
+
   function encolar(item) {
-    outbox = outbox.filter(function (x) { return !(x.op === item.op && x.id === item.id); }).concat([item]);
+    meterEnCola(item);
     guardarCola();
+    pintarEstado();
     sincronizar();
   }
 
@@ -1163,8 +1286,9 @@
     if (!sheetUrl) { dot.className = "dot local"; txt.textContent = "Sin planilla"; }
     else if (syncing) { dot.className = "dot"; txt.textContent = "Sincronizando"; }
     else if (lastError === "viejo") { dot.className = "dot bad"; txt.textContent = "Script viejo"; }
-    else if (outbox.length) { dot.className = "dot local"; txt.textContent = outbox.length + " sin subir"; }
-    else if (lastError) { dot.className = "dot bad"; txt.textContent = "Sin señal"; }
+    else if (outbox.length) { dot.className = "dot local"; txt.textContent = outbox.length + " sin enviar"; }
+    else if (lastError === "red") { dot.className = "dot bad"; txt.textContent = "Sin señal"; }
+    else if (lastError) { dot.className = "dot bad"; txt.textContent = "Reintentando"; }
     else { dot.className = "dot ok"; txt.textContent = "Al día"; }
 
     var aviso = $("localNotice");
@@ -1174,8 +1298,6 @@
         msg = "<strong>Este teléfono no está vinculado a la planilla.</strong> Abrí el link que te mandó Igna y agregalo a la pantalla de inicio: con eso queda vinculado solo. Mientras tanto los gastos quedan guardados acá y no los ven los demás.";
       } else if (lastError === "viejo") {
         msg = "<strong>La planilla tiene la versión vieja del script.</strong> La app no puede leer los gastos de ahí hasta que se actualice. Mientras tanto seguís viendo y cargando los de este teléfono, y nada se pierde.";
-      } else if (lastError === "lectura") {
-        msg = "<strong>No se pudo leer la planilla.</strong> Seguís viendo lo guardado en este teléfono. Se reintenta solo.";
       }
       aviso.innerHTML = msg;
       aviso.hidden = !msg;
@@ -1230,7 +1352,7 @@
       '<span class="stripe" style="background:var(--' + v + ')"></span>' +
       '<span class="row-mid">' +
         '<span class="row-top">' + titulo + ' ' +
-          '<span class="est-tag" style="background:var(--' + v + '-bg);color:var(--' + v + ')">' + EST_SHORT[g.establecimiento] + '</span>' +
+          '<span class="est-tag" style="background:var(--' + v + '-bg);color:var(--' + v + ')">' + esc(EST_SHORT[g.establecimiento] || g.establecimiento || "—") + '</span>' +
         '</span>' +
         '<span class="row-sub">' + bits.join(" · ") + '</span>' +
       '</span>' +
@@ -1328,7 +1450,7 @@
     bars($("sumEst"), ESTS.map(function (e) {
       return [e, sum(mes.filter(function (g) { return g.establecimiento === e; }))];
     }).filter(function (p) { return p[1] > 0; }).sort(function (a, b) { return b[1] - a[1]; }),
-      function (name) { return "var(--" + EST_VAR[name] + ")"; }, vacio);
+      function (name) { return "var(--" + (EST_VAR[name] || "nc") + ")"; }, vacio);
 
     bars($("sumProv"), groupBy(mes, "proveedor", "Sin proveedor").slice(0, 12),
       function () { return "var(--amber)"; }, vacio);
@@ -1351,6 +1473,10 @@
   }
 
   function renderConfig() {
+    // Si se está renombrando algo, guardar lo que ya se escribió.
+    var enEdicion = document.querySelector("#tab-config .cfg-edit");
+    var escrito = enEdicion ? enEdicion.value : null;
+    var conFoco = enEdicion && document.activeElement === enEdicion;
     ["prov", "medio"].forEach(function (which) {
       var c = CFG[which], items = itemsOf(which);
       $(c.countEl).textContent = items.length;
@@ -1375,6 +1501,11 @@
         '</div>';
       }).join("");
     });
+    var nuevo = document.querySelector("#tab-config .cfg-edit");
+    if (nuevo && escrito !== null) {
+      nuevo.value = escrito;
+      if (conFoco) { nuevo.focus(); try { nuevo.setSelectionRange(escrito.length, escrito.length); } catch (e) {} }
+    }
     pintarEstado();
   }
 
@@ -1621,6 +1752,18 @@
   }
   function closeForm() { $("formOverlay").hidden = true; editingId = null; }
 
+  /* Si llegan listas nuevas con el formulario abierto, se rearman los
+     desplegables y se vuelve a dejar elegido lo que la persona ya había
+     elegido. El resto del formulario no se toca. */
+  function refrescarFormAbierto() {
+    if ($("formOverlay").hidden) return;
+    var prov = $("fProveedor").value, medio = $("fMedio").value;
+    fillSelect($("fProveedor"), proveedores,
+      proveedores.length ? "Sin proveedor" : "Cargá proveedores en Config", prov);
+    fillSelect($("fMedio"), mediosPago,
+      mediosPago.length ? "Elegí una" : "Cargá formas de pago en Config", medio);
+  }
+
   $("openForm").addEventListener("click", function () { openForm(null); });
   $("cancelForm").addEventListener("click", closeForm);
   $("formOverlay").addEventListener("click", function (ev) { if (ev.target === this) closeForm(); });
@@ -1706,6 +1849,10 @@
   leerLinkInstalacion();
   sheetUrl = lsGet(LS.sheet, "") || "";
   outbox = lsGet(LS.outbox, []);
+  if (!Array.isArray(outbox)) outbox = [];
+  // Pendientes guardados por la versión anterior: se numeran en su orden.
+  outbox.forEach(function (it, i) { if (!it.n) it.n = i + 1; });
+  ultimoN = sigNumero() - 1;
   gastos = lsGet(LS.gastos, []).map(function (g) { return normGasto(g.id || newId(), g); }).sort(byDateDesc);
   proveedores = lsGet(LS.proveedores, []).sort(cmpEs);
   mediosPago = lsGet(LS.mediosPago, []);
@@ -1715,10 +1862,12 @@
   pintarEstado();
   if (sheetUrl) sincronizar();
 
+  /* Al volver a la app: si hay algo pendiente se manda ya; si no, se relee
+     la planilla (salvo que se haya leído hace un ratito). */
   document.addEventListener("visibilitychange", function () {
     if (document.visibilityState !== "visible") return;
     if (!sheetUrl) return;
-    if (Date.now() - lastFetch < 20000) return;
+    if (!outbox.length && Date.now() - lastFetch < 20000) return;
     sincronizar();
   });
 
