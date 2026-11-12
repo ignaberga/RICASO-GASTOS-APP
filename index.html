@@ -677,9 +677,10 @@
         <option value="Olveira Anello SAS">Olveira Anello SAS</option>
       </select>
       <select id="fltPersona" aria-label="Filtrar por persona">
-        <option value="">Mariano y Hernán</option>
+        <option value="">Todos</option>
         <option value="Mariano">Solo Mariano</option>
         <option value="Hernán">Solo Hernán</option>
+        <option value="Juli">Solo Juli</option>
       </select>
       <select id="fltMedio" class="full" aria-label="Filtrar por forma de pago">
         <option value="">Todas las formas de pago</option>
@@ -759,7 +760,7 @@
       </div>
     </div>
 
-    <p class="acc-note" style="margin-top:18px">Todo lo que cambies acá se guarda en la planilla, así que lo ven Mariano y Hernán la próxima vez que abran la app.</p>
+    <p class="acc-note" style="margin-top:18px">Todo lo que cambies acá se guarda en la planilla, así que lo ven Mariano, Hernán y Juli la próxima vez que abran la app.</p>
 
     <div class="acc" style="margin-top:18px">
       <div style="padding:16px">
@@ -793,6 +794,7 @@
       <div class="seg" id="segPersona">
         <button type="button" data-persona="Mariano" aria-pressed="false">Mariano</button>
         <button type="button" data-persona="Hernán" aria-pressed="false">Hernán</button>
+        <button type="button" data-persona="Juli" aria-pressed="false">Juli</button>
       </div>
     </div>
 
@@ -888,7 +890,7 @@
      teléfono queda vinculado para siempre y nadie tiene que pegar nada
      en Config. La dirección nunca se escribe en este repositorio.
      No borrar el #... de la dirección del sitio: se perdería el vínculo. */
-  var PERSONAS = ["Mariano", "Hernán"];
+  var PERSONAS = ["Mariano", "Hernán", "Juli"];
 
   function esUrlDeScript(u) {
     return /^https:\/\/script\.google(usercontent)?\.com\//.test(u);
@@ -1455,7 +1457,7 @@
     bars($("sumProv"), groupBy(mes, "proveedor", "Sin proveedor").slice(0, 12),
       function () { return "var(--amber)"; }, vacio);
 
-    bars($("sumPersona"), ["Mariano", "Hernán"].map(function (p) {
+    bars($("sumPersona"), PERSONAS.map(function (p) {
       return [p, sum(mes.filter(function (g) { return g.persona === p; }))];
     }).filter(function (p) { return p[1] > 0; }).sort(function (a, b) { return b[1] - a[1]; }),
       function () { return "var(--ink-soft)"; }, vacio);

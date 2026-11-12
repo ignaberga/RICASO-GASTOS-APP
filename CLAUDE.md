@@ -10,13 +10,14 @@ Manantiales, que **no** es de Olveira Anello y por ahora queda afuera.
 **Ignacio** es contador público y el dueño de este repositorio. Ricaso es cliente
 del estudio donde trabaja, y además le pidieron llevar la contabilidad de gestión
 interna. Antes de esta app los gastos no se registraban en ningún lado: la idea
-es que Mariano y Hernán los carguen en el momento y que la planilla quede como
+es que Mariano, Hernán y Juli (son hermanos) los carguen en el momento y que la planilla quede como
 base de datos para armar informes.
 
 ## Quién usa la app
 
 - **Mariano**: carga gastos desde el celular.
 - **Hernán**: carga gastos desde el celular.
+- **Juli**: carga gastos desde el celular.
 - **Ignacio**: la tiene en el celular, revisa los datos y la planilla, y maneja
   las listas de proveedores y formas de pago.
 
@@ -43,7 +44,7 @@ el celular en el mostrador, apurado. **Menos pasos es mejor.**
   librerías externas, sin build y sin servidor. Se publica en
   https://ignaberga.github.io/RICASO-GASTOS-APP/ y se instala como acceso
   directo en la pantalla de inicio. No es app de tienda.
-- `README.md`: instrucciones para Mariano y Hernán.
+- `README.md`: instrucciones para Mariano, Hernán y Juli.
 - `Codigo-AppsScript.gs`: copia de respaldo del **Apps Script** que conecta con
   la planilla. El que funciona de verdad está pegado dentro de la planilla
   (Extensiones → Apps Script) y lo actualiza Ignacio a mano. Si se cambia, darle
@@ -91,7 +92,9 @@ el celular en el mostrador, apurado. **Menos pasos es mejor.**
   `Olveira Anello SAS` (gastos de la sociedad en general). En el formulario van
   los tres locales en una fila y la sociedad abajo, a lo ancho. Un local que la
   app no conoce se respeta tal cual (antes se convertía en CDP).
-- Personas que cargan: `Mariano` y `Hernán` (constante `PERSONAS`). Cada teléfono
+- Personas que cargan: `Mariano`, `Hernán` y `Juli` (constante `PERSONAS`). En
+  el link de instalación, Hernán va como `quien=Hern%C3%A1n`. Ignacio no tiene
+  link con `quien`. Cada teléfono
   recuerda quién lo usa (`ricaso_persona`) y no lo vuelve a preguntar.
 - Los links de instalación **no se generan dentro de la app**: se los arma Claude
   en el chat cuando Ignacio pasa la dirección `/exec`, y nunca se guardan en el
@@ -164,6 +167,8 @@ el celular en el mostrador, apurado. **Menos pasos es mejor.**
   la app en Chromium a 360 px con señal, sin señal (incluido cerrar y reabrir),
   planilla lenta (4 s), otro teléfono, respuesta incompleta, script anterior y
   fecha a las 23:30.
+
+- Noviembre 2026 (12): se sumó **Juli** como tercera persona que carga.
 
 ## Pendientes conversados
 

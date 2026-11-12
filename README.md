@@ -1,6 +1,6 @@
 # Gastos Ricaso
 
-App para que Mariano y Hernán registren los gastos de Ricaso desde el celular.
+App para que Mariano, Hernán y Juli registren los gastos de Ricaso desde el celular.
 Es un solo archivo, `index.html`, sin instalación ni servidor.
 
 **Dirección de la app:** https://ignaberga.github.io/RICASO-GASTOS-APP/
@@ -22,7 +22,7 @@ son de un local en particular.
 **La planilla de Google es la base de datos.** Ahí viven los gastos y también
 las listas de proveedores y formas de pago. Los tres teléfonos leen de la
 planilla al abrir la app y escriben en ella cada cambio, así todos ven lo
-mismo: si Mariano agrega un proveedor, le aparece a Hernán.
+mismo: si Mariano agrega un proveedor, le aparece a Hernán y a Juli.
 
 Cada teléfono guarda además una copia local, que sirve para que la app abra al
 instante y para seguir cargando sin señal. Al guardar, el formulario se cierra
