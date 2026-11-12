@@ -94,8 +94,12 @@ el celular en el mostrador, apurado. **Menos pasos es mejor.**
   app no conoce se respeta tal cual (antes se convertía en CDP).
 - Personas que cargan: `Mariano`, `Hernán` y `Juli` (constante `PERSONAS`). En
   el link de instalación, Hernán va como `quien=Hern%C3%A1n`. Ignacio no tiene
-  link con `quien`. Cada teléfono
-  recuerda quién lo usa (`ricaso_persona`) y no lo vuelve a preguntar.
+  link con `quien`. **Quién carga queda fijo por link**: si el link trae
+  `quien`, el formulario no muestra "Quién carga" y solo dice "Lo carga Juli"
+  (al editar, "Lo cargó …" con la persona original, que no cambia). El link
+  manda cada vez que se abre (el ícono lo trae grabado) y se guarda en
+  `ricaso_persona`. Un teléfono sin `quien` en el link (el de Ignacio) sigue
+  eligiendo con los botones.
 - Los links de instalación **no se generan dentro de la app**: se los arma Claude
   en el chat cuando Ignacio pasa la dirección `/exec`, y nunca se guardan en el
   repo.
@@ -169,6 +173,8 @@ el celular en el mostrador, apurado. **Menos pasos es mejor.**
   fecha a las 23:30.
 
 - Noviembre 2026 (12): se sumó **Juli** como tercera persona que carga.
+- Noviembre 2026 (12): **quién carga queda fijo** con el link de cada uno; ya no
+  se pregunta. El formulario abre siempre desde arriba.
 
 ## Pendientes conversados
 

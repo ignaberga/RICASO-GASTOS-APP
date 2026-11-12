@@ -511,6 +511,9 @@
     margin: 0 0 18px;
     text-wrap: balance;
   }
+  .sheet h2 + .quien-fijo { margin: -12px 0 16px; }
+  .quien-fijo { font-size: 13.5px; color: var(--ink-soft); }
+  .quien-fijo strong { color: var(--ink); }
   .field { margin-bottom: 15px; }
   .field > label {
     display: block;
@@ -788,8 +791,9 @@
 <div class="overlay" id="formOverlay" hidden>
   <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="formTitle">
     <h2 id="formTitle">Nuevo gasto</h2>
+    <p class="quien-fijo" id="quienFijo" hidden></p>
 
-    <div class="field">
+    <div class="field" id="campoPersona">
       <label>Quién carga</label>
       <div class="seg" id="segPersona">
         <button type="button" data-persona="Mariano" aria-pressed="false">Mariano</button>
@@ -865,7 +869,7 @@
 (function () {
   "use strict";
 
-  var APP_VERSION = "2026-11-12.1";
+  var APP_VERSION = "2026-11-12.2";
 
   // "Olveira Anello SAS" es para los gastos de la sociedad en general,
   // que no son de un local en particular.
@@ -903,14 +907,17 @@
     try { p = new URLSearchParams(hash); } catch (e) { return; }
     var url = (p.get("vincular") || "").trim();
     if (esUrlDeScript(url)) lsSet(LS.sheet, url);
-    // La persona del link solo se toma la primera vez: si después se
-    // cambia al cargar un gasto, manda lo último que eligió el teléfono.
-    var quien = p.get("quien"), actual = "";
-    try { actual = localStorage.getItem("ricaso_persona") || ""; } catch (e) {}
-    if (!actual && PERSONAS.indexOf(quien) !== -1) {
+    // Cada link es de una persona: el que entra por el ícono de Juli carga
+    // siempre como Juli, sin que se le pregunte. El link manda cada vez que
+    // se abre la app (el ícono lo trae grabado). Un teléfono sin nombre en
+    // el link (el de Ignacio) sigue eligiendo a mano.
+    var quien = p.get("quien");
+    if (PERSONAS.indexOf(quien) !== -1) {
+      personaFija = quien;
       try { localStorage.setItem("ricaso_persona", quien); } catch (e) {}
     }
   }
+  var personaFija = "";
 
   var gastos = [], proveedores = [], mediosPago = [];
   var sheetUrl = "", outbox = [];
@@ -1731,10 +1738,18 @@
     $("saveForm").textContent = existing ? "Guardar cambios" : "Guardar";
     $("formErr").hidden = true;
 
-    var persona = existing ? existing.persona : "";
+    // Al editar se respeta quién lo cargó originalmente.
+    var persona = existing ? existing.persona : personaFija;
     if (!persona) { try { persona = localStorage.getItem("ricaso_persona") || ""; } catch (e) { persona = ""; } }
     selPersona = persona;
     setSeg("segPersona", "data-persona", persona);
+    // Con el link de cada uno no se pregunta quién carga: queda fijo.
+    var fijo = !!personaFija && !!persona;
+    $("campoPersona").hidden = fijo;
+    $("quienFijo").hidden = !fijo;
+    if (fijo) {
+      $("quienFijo").innerHTML = (existing ? "Lo cargó " : "Lo carga ") + "<strong>" + esc(persona) + "</strong>";
+    }
 
     selEst = existing ? existing.establecimiento : "";
     setSeg("segEst", "data-est", selEst);
@@ -1751,6 +1766,9 @@
     $("montoHint").textContent = existing ? fmt(Number(existing.monto) || 0) : "Usá la coma para los centavos.";
 
     $("formOverlay").hidden = false;
+    // Que abra siempre desde arriba, no donde quedó la vez anterior.
+    var hoja = $("formOverlay").querySelector(".sheet");
+    if (hoja) hoja.scrollTop = 0;
   }
   function closeForm() { $("formOverlay").hidden = true; editingId = null; }
 
